@@ -32,6 +32,9 @@ public:
   static char ID;
 
   MachinePostDominatorTree();
+  explicit MachinePostDominatorTree(MachineFunction &MF) : MachineFunctionPass(ID) {
+    calculate(MF);
+  }
 
   PostDomTreeT &getBase() {
     if (!PDT)
@@ -55,6 +58,11 @@ public:
                  const MachineDomTreeNode *B) const {
     return PDT->dominates(A, B);
   }
+
+  
+  //lzc新增生成反向支配树的方法
+  void calculate(MachineFunction &F);
+
 
   bool dominates(const MachineBasicBlock *A, const MachineBasicBlock *B) const {
     return PDT->dominates(A, B);

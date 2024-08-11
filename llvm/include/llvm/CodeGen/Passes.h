@@ -466,6 +466,10 @@ namespace llvm {
   /// printing assembly.
   ModulePass *createMachineOutlinerPass(bool RunOnAllFunctions = true);
 
+  /// This pass performs RegionAbstract on machine instructions directly before
+  /// printing assembly.
+  ModulePass *createMachineRegionAbstractPass(bool RunOnAllFunctions = true);
+
   /// This pass expands the experimental reduction intrinsics into sequences of
   /// shuffles.
   FunctionPass *createExpandReductionsPass();

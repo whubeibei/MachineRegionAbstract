@@ -1210,6 +1210,9 @@ void TargetPassConfig::addMachinePasses() {
       addPass(createMachineOutlinerPass(RunOnAllFunctions));
   }
 
+  //测试,MachineRegionAbstractPass
+  addPass(createMachineRegionAbstractPass(true));
+
   // Machine function splitter uses the basic block sections feature. Both
   // cannot be enabled at the same time. Basic block sections takes precedence.
   // FIXME: In principle, BasicBlockSection::Labels and splitting can used

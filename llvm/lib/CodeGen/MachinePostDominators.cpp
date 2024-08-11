@@ -77,3 +77,9 @@ void MachinePostDominatorTree::print(llvm::raw_ostream &OS,
                                      const Module *M) const {
   PDT->print(OS);
 }
+
+
+void MachinePostDominatorTree::calculate(MachineFunction &F) {
+  PDT.reset(new PostDomTreeBase<MachineBasicBlock>());
+  PDT->recalculate(F);
+}

@@ -723,6 +723,64 @@ bool MachineInstr::shouldUpdateCallSiteInfo() const {
   return isCandidateForCallSiteEntry();
 }
 
+//lzc添加，不完善
+//获得终结指令相应的操作码，根据操作码的类型获得其后继块数。
+//该方法受不同指令集规范的影响，在IR中相应的文件Instruction.def定义了指令的规范
+//MIR中暂时未找到
+//通用的部分机器指令操作码在Target.def文件中定义，平台特定的指令在target目录下.td文件中
+unsigned MachineInstr::getNumSuccessors() {
+  unsigned numSuccessors = 0;
+
+  switch (getOpcode()) {
+  case TargetOpcode::G_BR:
+  case TargetOpcode::G_BRINDIRECT:
+    // 无条件分支，通常有一个后继
+    numSuccessors = 1;
+    break;
+  case TargetOpcode::G_BRCOND:
+    // 条件分支，通常有两个后继
+    numSuccessors = 2;
+    break;
+  case TargetOpcode::G_BRJT:
+    // 跳转到跳转表，switch指令，假设有多个后继，不能抽象
+    numSuccessors = 2;
+    break;
+
+  // case TargetOpcode::G_:
+  //   // SWITCH 指令，根据操作数数量确定后继数量
+  //   for (const MachineOperand &MO : MI.operands()) {
+  //     if (MO.isMBB()) {
+  //       ++numSuccessors;
+  //     }
+  //   }
+  //   break;
+  default:
+    llvm_unreachable("Unknown terminator opcode");
+  }
+
+  return numSuccessors;
+}
+
+//lzc getFirstSuccessor
+//用来获得第一个后继块
+MachineBasicBlock *MachineInstr::getFirstSuccessor() const {
+  assert(isTerminator() && "Not a terminator instruction!");
+
+  switch (getOpcode()) {
+    case TargetOpcode::G_BR:
+    case TargetOpcode::G_BRJT:
+    case TargetOpcode::G_BRINDIRECT:
+    case TargetOpcode::G_BRCOND:
+      // Check if the index is valid
+      return getOperand(0).getMBB();
+    
+    // Add cases for other terminator instructions as needed
+
+    default:
+      llvm_unreachable("Unknown terminator instruction!");
+  }
+}
+
 unsigned MachineInstr::getNumExplicitOperands() const {
   unsigned NumOperands = MCID->getNumOperands();
   if (!MCID->isVariadic())

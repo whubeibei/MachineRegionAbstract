@@ -321,6 +321,12 @@ public:
     AsmPrinterFlags &= ~Flag;
   }
 
+  //lzc添加getNumSuccessors函数，用来获得后继块的数目
+  unsigned getNumSuccessors();
+
+  //lzc添加getFirstSuccessor函数，用来获得第一个后继块
+  MachineBasicBlock *getFirstSuccessor() const;
+
   /// Return the MI flags bitvector.
   uint16_t getFlags() const {
     return Flags;

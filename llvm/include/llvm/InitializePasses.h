@@ -297,6 +297,7 @@ void initializeMachineLoopInfoPass(PassRegistry&);
 void initializeMachineModuleInfoWrapperPassPass(PassRegistry &);
 void initializeMachineOptimizationRemarkEmitterPassPass(PassRegistry&);
 void initializeMachineOutlinerPass(PassRegistry&);
+void initializeMachineRegionAbstractPass(PassRegistry&);
 void initializeMachinePipelinerPass(PassRegistry&);
 void initializeMachinePostDominatorTreePass(PassRegistry&);
 void initializeMachineRegionInfoPassPass(PassRegistry&);
