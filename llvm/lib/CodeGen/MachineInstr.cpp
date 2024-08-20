@@ -2136,7 +2136,8 @@ MachineInstrExpressionTrait::getHashValue(const MachineInstr* const &MI) {
 
     HashComponents.push_back(hash_value(MO));
   }
-  return hash_combine_range(HashComponents.begin(), HashComponents.end());
+  unsigned result = hash_combine_range(HashComponents.begin(), HashComponents.end());
+  return result;
 }
 
 void MachineInstr::emitError(StringRef Msg) const {

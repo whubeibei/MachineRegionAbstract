@@ -9092,6 +9092,68 @@ X86InstrInfo::getOutliningType(MachineBasicBlock::iterator &MIT,  unsigned Flags
   return outliner::InstrType::Legal;
 }
 
+outliner::InstrType
+X86InstrInfo::getRAType(MachineBasicBlock::iterator &MIT,  unsigned Flags) const {
+  MachineInstr &MI = *MIT;
+  // Don't allow debug values to impact outlining type.
+  if (MI.isDebugInstr() || MI.isIndirectDebugValue())
+    return outliner::InstrType::Invisible;
+
+  // At this point, KILL instructions don't really tell us much so we can go
+  // ahead and skip over them.
+  if (MI.isKill())
+    return outliner::InstrType::Invisible;
+
+  // Is this a tail call? If yes, we can outline as a tail call.
+  if (isTailCall(MI))
+    return outliner::InstrType::Legal;
+
+  //lzc,
+  // 终结指令也可以抽象
+  // // Is this the terminator of a basic block?
+  // if (MI.isTerminator() || MI.isReturn()) {
+
+  //   // Does its parent have any successors in its MachineFunction?
+  //   if (MI.getParent()->succ_empty())
+  //     return outliner::InstrType::Legal;
+
+  //   // It does, so we can't tail call it.
+  //   return outliner::InstrType::Illegal;
+  // }
+
+  // Don't outline anything that modifies or reads from the stack pointer.
+  //
+  // FIXME: There are instructions which are being manually built without
+  // explicit uses/defs so we also have to check the MCInstrDesc. We should be
+  // able to remove the extra checks once those are fixed up. For example,
+  // sometimes we might get something like %rax = POP64r 1. This won't be
+  // caught by modifiesRegister or readsRegister even though the instruction
+  // really ought to be formed so that modifiesRegister/readsRegister would
+  // catch it.
+  if (MI.modifiesRegister(X86::RSP, &RI) || MI.readsRegister(X86::RSP, &RI) ||
+      MI.getDesc().hasImplicitUseOfPhysReg(X86::RSP) ||
+      MI.getDesc().hasImplicitDefOfPhysReg(X86::RSP))
+    return outliner::InstrType::Illegal;
+
+  // Outlined calls change the instruction pointer, so don't read from it.
+  if (MI.readsRegister(X86::RIP, &RI) ||
+      MI.getDesc().hasImplicitUseOfPhysReg(X86::RIP) ||
+      MI.getDesc().hasImplicitDefOfPhysReg(X86::RIP))
+    return outliner::InstrType::Illegal;
+
+  // Positions can't safely be outlined.
+  if (MI.isPosition())
+    return outliner::InstrType::Illegal;
+
+  // Make sure none of the operands of this instruction do anything tricky.
+  for (const MachineOperand &MOP : MI.operands())
+    if (MOP.isCPI() || MOP.isJTI() || MOP.isCFIIndex() || MOP.isFI() ||
+        MOP.isTargetIndex())
+      return outliner::InstrType::Illegal;
+
+  return outliner::InstrType::Legal;
+}
+
 void X86InstrInfo::buildOutlinedFrame(MachineBasicBlock &MBB,
                                           MachineFunction &MF,
                                           const outliner::OutlinedFunction &OF)
@@ -9125,6 +9187,44 @@ X86InstrInfo::insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
   }
 
   return It;
+}
+
+
+//lzc.todo
+//暂时不考虑尾调用，直接插入一个call
+MachineBasicBlock::iterator
+X86InstrInfo::insertRACall(Module &M, MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator &It,
+                                 MachineFunction &MF) const {
+  // // Is it a tail call?
+  // if (C.CallConstructionID == MachineOutlinerTailCall) {
+  //   // Yes, just insert a JMP.
+  //   It = MBB.insert(It,
+  //                 BuildMI(MF, DebugLoc(), get(X86::TAILJMPd64))
+  //                     .addGlobalAddress(M.getNamedValue(MF.getName())));
+  // } else {
+    // No, insert a call.
+    It = MBB.insert(It,
+                  BuildMI(MF, DebugLoc(), get(X86::CALL64pcrel32))
+                      .addGlobalAddress(M.getNamedValue(MF.getName())));
+  //}
+
+  return It;
+}
+
+//lzc,todo
+//暂时不清楚分割区域的情况，先搁置，不增加返回指令
+void X86InstrInfo::buildRAFrame(MachineBasicBlock &MBB,
+                                          MachineFunction &MF)
+                                          const {
+  // // If we're a tail call, we already have a return, so don't do anything.
+  // if (OF.FrameConstructionID == MachineOutlinerTailCall)
+  //   return;
+
+  // We're a normal call, so our sequence doesn't have a return instruction.
+  // Add it in.
+  MachineInstr *retq = BuildMI(MF, DebugLoc(), get(X86::RETQ));
+  MBB.insert(MBB.end(), retq);
 }
 
 #define GET_INSTRINFO_HELPERS

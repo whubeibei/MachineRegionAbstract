@@ -1041,7 +1041,8 @@ bool MachineOutliner::doOutline(Module &M, unsigned &OutlinedFunctionNum) {
   // instead.
 
   // Check if we want size remarks.
-  bool ShouldEmitSizeRemarks = M.shouldEmitInstrCountChangedRemark();
+  //bool ShouldEmitSizeRemarks = M.shouldEmitInstrCountChangedRemark();
+  bool ShouldEmitSizeRemarks = true;
   StringMap<unsigned> FunctionToInstrCount;
   if (ShouldEmitSizeRemarks)
     initSizeRemarkInfo(M, MMI, FunctionToInstrCount);

@@ -40,7 +40,7 @@ static cl::opt<unsigned> RegionFindingMode(
              "llvm region, 1 mode (default) use a custom function by swh."));
 
 static cl::opt<unsigned> CreateFuncOverHead(
-    "create-function-overhead", cl::init(1), cl::Hidden,
+    "create-function-overhead", cl::init(0), cl::Hidden,
     cl::desc("Overhead of creating a new function in code size."));
 
 static cl::opt<unsigned> SmallFunctionLimit(
@@ -1007,6 +1007,99 @@ void MachineRegionAbstractManager::analysisRegionGroup(MRARegionGroup *Group,
   //getGroupParamsList(MRMI);
 }
 
+bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
+                                         MachineRegionMergeInfo &MRMI) {
+  bool RegionAbstractedSomething = false;
+  MachineFunction *MF = MRMI.MergedFunc;
+  const TargetSubtargetInfo &STI = MF->getSubtarget();
+  const TargetInstrInfo &TII = *STI.getInstrInfo();
+
+    // Replace occurrences of the sequence with calls to the new function.
+    for (MRARegionCandidate *C : *Group) {
+      MachineBasicBlock &MBB = *(C->RelatedMBlocks.front());
+      MachineBasicBlock::iterator StartIt = MBB.front();
+      MachineBasicBlock::iterator EndIt = MBB.back();
+
+      // Insert the call.
+      auto CallInst = TII.insertRACall(M, MBB, StartIt, *MF);  
+
+      // If the caller tracks liveness, then we need to make sure that
+      // anything we outline doesn't break liveness assumptions. The outlined
+      // functions themselves currently don't track liveness, but we should
+      // make sure that the ranges we yank things out of aren't wrong.
+      if (MBB.getParent()->getProperties().hasProperty(
+              MachineFunctionProperties::Property::TracksLiveness)) {
+        // The following code is to add implicit def operands to the call
+        // instruction. It also updates call site information for moved
+        // code.
+        SmallSet<Register, 2> UseRegs, DefRegs;
+        // Copy over the defs in the outlined range.
+        // First inst in outlined range <-- Anything that's defined in this
+        // ...                           .. range has to be added as an
+        // implicit Last inst in outlined range  <-- def to the call
+        // instruction. Also remove call site information for outlined block
+        // of code. The exposed uses need to be copied in the outlined range.
+        for (MachineBasicBlock::reverse_iterator
+                 Iter = EndIt.getReverse(),
+                 Last = std::next(CallInst.getReverse());
+             Iter != Last; Iter++) {
+          MachineInstr *MI = &*Iter;
+          for (MachineOperand &MOP : MI->operands()) {
+            // Skip over anything that isn't a register.
+            if (!MOP.isReg())
+              continue;
+
+            if (MOP.isDef()) {
+              // Introduce DefRegs set to skip the redundant register.
+              DefRegs.insert(MOP.getReg());
+              if (!MOP.isDead() && UseRegs.count(MOP.getReg()))
+                // Since the regiester is modeled as defined,
+                // it is not necessary to be put in use register set.
+                UseRegs.erase(MOP.getReg());
+            } else if (!MOP.isUndef()) {
+              // Any register which is not undefined should
+              // be put in the use register set.
+              UseRegs.insert(MOP.getReg());
+            }
+          }
+          if (MI->isCandidateForCallSiteEntry())
+            MI->getMF()->eraseCallSiteInfo(MI);
+        }
+
+        for (const Register &I : DefRegs)
+          // If it's a def, add it to the call instruction.
+          CallInst->addOperand(
+              MachineOperand::CreateReg(I, true, /* isDef = true */
+                                        true /* isImp = true */));
+
+        for (const Register &I : UseRegs)
+          // If it's a exposed use, add it to the call instruction.
+          CallInst->addOperand(
+              MachineOperand::CreateReg(I, false, /* isDef = false */
+                                        true /* isImp = true */));
+      }
+
+      // Erase from the point after where the call was inserted up to, and
+      // including, the final instruction in the sequence.
+      // Erase needs one past the end, so we need std::next there too.
+      MBB.erase(std::next(StartIt), std::next(EndIt));
+
+      //lzc,todo
+      //更新mapper，为了后续进行多次迭代
+      // // Keep track of what we removed by marking them all as -1.
+      // std::for_each(Mapper.UnsignedVec.begin() + C.getStartIdx(),
+      //               Mapper.UnsignedVec.begin() + C.getEndIdx() + 1,
+      //               [](unsigned &I) { I = static_cast<unsigned>(-1); });
+      RegionAbstractedSomething = true;
+
+      // Statistics.
+      NumRAed++;
+    }
+
+  return RegionAbstractedSomething;
+
+}
+
 bool MachineRegionAbstractManager::mergeRegionGroup(MRARegionGroup *Group,
                                              MachineRegionMergeInfo &MRMI) {
   // return false if no need to merge
@@ -1033,7 +1126,10 @@ bool MachineRegionAbstractManager::mergeRegionGroup(MRARegionGroup *Group,
   }
 
   ////替换原region
+  replaceCall(Group, MRMI);
   //replaceCodeWithCall(Group, MRMI);
+
+  printMIR();
 
   return true;
 }
@@ -1286,7 +1382,7 @@ void MachineRegionAbstract::populateMapper(InstructionMapper &Mapper, Module &M,
       Mapper.convertToUnsignedVec(*MBB, *TII);
       MBBsTraversed.insert(MBB);
     //把所有子节点压入栈内,如果没有子节点，则这一直链结束，需要插入分隔符，即一个特殊值
-      if (MBB->succ_size() == 0) {
+      if (MBB->succ_size() == 0) {//当没有后继块时，隔断
         // TODO:
         Mapper.InstrList.push_back(MBB->end()); //添加函数之间的隔断，块之间的隔断取消？？
         Mapper.UnsignedVec.push_back(NormalUpperLimit--); //隔断同时反映在映射后的数组中
@@ -1658,7 +1754,7 @@ bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
   // addLiveIns(MBB, LiveIns);
 
   // TII.buildOutlinedFrame(MBB, MF, OF);
-
+  return true;
 }
 
 // void MachineRegionMergeInfo::fillWithEachCandidate(
@@ -2660,21 +2756,14 @@ bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
 //   return true;
 // }
 
-void MachineRegionAbstractManager::printMIR(Module &M, MachineModuleInfo &MMI) {
+void MachineRegionAbstractManager::printMIR() {
    for (Function &F : M)
    {
     if (F.empty())
       continue;
 
     MachineFunction *MF = MMI.getMachineFunction(F);
-
-    for (MachineBasicBlock &MBB : *MF)
-    {
-      for (MachineInstr &MI : MBB)
-      {
-        MI.dump();
-      }
-    }
+    MF->dump();
     
    }
    
@@ -2710,7 +2799,8 @@ static void printCustomMIR(Module &M, MachineModuleInfo &MMI){
     if (F.empty())
       continue;
     MachineFunction *MF = MMI.getMachineFunction(F);
-    printMFCustomMIR(*MF,dbgs());
+    //printMFCustomMIR(*MF,dbgs());
+    MF->dump();
    }
 }
 
@@ -2746,23 +2836,6 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   //printf("打印MIR");
   //printMIR(dbgs(),M);
   printCustomMIR(M,MMI);
-//   for (Function &F : M)
-//    {
-//     if (F.empty())
-//       continue;
-
-//     MachineFunction *MF = MMI.getMachineFunction(F);
-//     printCustomMIR(*MF,dbgs());
-//     printMIR(dbgs(),*MF);
-//     for (MachineBasicBlock &MBB : *MF)
-//     {
-//       for (MachineInstr &MI : MBB)
-//       {
-//         MI.dump();
-//       }
-//     }
-    
-//    }
 
   InstructionMapper Mapper;
   // Prepare instruction mappings for the suffix tree.
@@ -2828,7 +2901,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
     return false;
   }
 
-  MachineRegionAbstractManager *MRAM = new MachineRegionAbstractManager(M,MMI);
+  MachineRegionAbstractManager *MRAM = new MachineRegionAbstractManager(M,MMI,Mapper);
   bool NeedMerge = false;
   if (RAGetAndMerge.getValue()) {
     NeedMerge = MRAM->getAndMergeCandidateList(NewRSList, Mapper.InstrList, *this);
@@ -2840,6 +2913,8 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
     RATimeGetCandidates.stopTimer();
     RATimeMergeCandidate.startTimer();
   #endif
+
+  //MRAM->Mapper = Mapper;
     if (NeedMerge)
       MRAM->mergeCandidateList();
 

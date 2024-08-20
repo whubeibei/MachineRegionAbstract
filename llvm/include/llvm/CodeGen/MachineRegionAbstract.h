@@ -422,9 +422,11 @@ struct InstructionMapper {
     unsigned MINumber;
     raw_ostream &OS = dbgs();
 
+    OS << MBB.getFullName() << "\n";
+
     for (MachineBasicBlock::iterator Et = MBB.end(); It != Et; ++It) {
       // Keep track of where this instruction is in the module.
-      switch (TII.getOutliningType(It, Flags)) {
+      switch (TII.getRAType(It, Flags)) {
       case InstrType::Illegal:
         mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
                              InstrListForMBB);
@@ -461,8 +463,9 @@ struct InstructionMapper {
       // "string". This makes sure we won't match across basic block or function
       // boundaries since the "end" is encoded uniquely and thus appears in no
       // repeated substring.
-      mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
-                           InstrListForMBB);
+      //lzc,修改
+      // mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
+      //                      InstrListForMBB);
       llvm::append_range(InstrList, InstrListForMBB);
       llvm::append_range(UnsignedVec, UnsignedVecForMBB);
     }
@@ -533,16 +536,20 @@ struct MachineRegionAbstract : public ModulePass
 class MachineRegionAbstractManager {
 public:
   Module &M;
+  InstructionMapper &Mapper;
   std::vector<MRARegionGroup *> CandidateList;
   std::vector<MRARegionGroup *> IntraBlockCandidateList;
 
   DenseSet<MachineBasicBlock *> NonSplittableBlockSet;
   std::vector<MachineBasicBlock *> BlocksToDelete;
-  MachineRegionAbstractManager(Module &M0, MachineModuleInfo &MMI) : M(M0), MMI(MMI) {}
   unsigned CreatedMergedFunctionNum = 0;
+  unsigned NumRAed = 0;
   std::vector<MachineFunction *> CreatedMergedFuncList;
   std::set<MachineFunction *> AffectedFuncs;
   MachineModuleInfo &MMI;//需要获得的MIR层信息
+
+  MachineRegionAbstractManager(Module &M0, MachineModuleInfo &MMI, InstructionMapper &Mapper) : M(M0), MMI(MMI), Mapper(Mapper) {};
+
 
   // top level
   bool
@@ -570,9 +577,13 @@ public:
   void updateNonSplittableBlockSet(MachineRepeatedItemInRegion *Region);
   void removeFromNonSplittableBlockSet(MachineRepeatedItemInRegion *Region);
   int getFinallBenefit(MachineRegionMergeInfo &MRMI) { return 1; }
+  bool replaceCall(MRARegionGroup *Group,
+                                        MachineRegionMergeInfo &MRMI);
 
   //工具，用于打印变量
-  void printMIR(Module &M, MachineModuleInfo &MMI);
+  void printMIR();
+
+  //void setMapper(InstructionMapper)
 };
 
 

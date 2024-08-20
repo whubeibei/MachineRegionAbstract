@@ -1919,6 +1919,13 @@ public:
         "Target didn't implement TargetInstrInfo::getOutliningType!");
   }
 
+  /// Returns how or if \p MI should be RA.
+  virtual outliner::InstrType
+  getRAType(MachineBasicBlock::iterator &MIT, unsigned Flags) const {
+    llvm_unreachable(
+        "Target didn't implement TargetInstrInfo::getOutliningType!");
+  }
+
   /// Optional target hook that returns true if \p MBB is safe to outline from,
   /// and returns any target-specific information in \p Flags.
   virtual bool isMBBSafeToOutlineFrom(MachineBasicBlock &MBB,
@@ -1942,6 +1949,20 @@ public:
                      const outliner::Candidate &C) const {
     llvm_unreachable(
         "Target didn't implement TargetInstrInfo::insertOutlinedCall!");
+  }
+
+  // Insert a call to an RegionAbstract 
+  virtual MachineBasicBlock::iterator
+  insertRACall(Module &M, MachineBasicBlock &MBB,
+                     MachineBasicBlock::iterator &It, MachineFunction &MF) const {
+    llvm_unreachable(
+        "Target didn't implement TargetInstrInfo::insertRACall!");
+  }
+
+  /// Insert a custom frame for RA functions.
+  virtual void buildRAFrame(MachineBasicBlock &MBB, MachineFunction &MF) const {
+    llvm_unreachable(
+        "Target didn't implement TargetInstrInfo::buildOutlinedFrame!");
   }
 
   /// Return true if the function can safely be outlined from.

@@ -547,6 +547,9 @@ public:
   outliner::InstrType
   getOutliningType(MachineBasicBlock::iterator &MIT, unsigned Flags) const override;
 
+  outliner::InstrType
+  getRAType(MachineBasicBlock::iterator &MIT, unsigned Flags) const override;
+
   void buildOutlinedFrame(MachineBasicBlock &MBB, MachineFunction &MF,
                           const outliner::OutlinedFunction &OF) const override;
 
@@ -554,6 +557,12 @@ public:
   insertOutlinedCall(Module &M, MachineBasicBlock &MBB,
                      MachineBasicBlock::iterator &It, MachineFunction &MF,
                      const outliner::Candidate &C) const override;
+
+  void buildRAFrame(MachineBasicBlock &MBB, MachineFunction &MF) const override;
+
+  MachineBasicBlock::iterator
+  insertRACall(Module &M, MachineBasicBlock &MBB,
+                     MachineBasicBlock::iterator &It, MachineFunction &MF) const override;
 
 #define GET_INSTRINFO_HELPER_DECLS
 #include "X86GenInstrInfo.inc"
