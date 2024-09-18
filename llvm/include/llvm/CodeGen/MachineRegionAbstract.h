@@ -75,7 +75,7 @@ struct MachineRepeatedItemInRegion {
   bool RegionSplit = false;
   // case 0, keep 1 Inst in entry block, keep 0 Inst in exit block
   // case 1,  keep full entry block or exit block
-  // case 2, keep part of Releated Instructions
+  // case 2, keep part of Related Instructions
   // default, same to case 0
   unsigned EntryBlockSplitMode = 0;
   unsigned ExitBlockSplitMode = 0;
@@ -130,6 +130,9 @@ struct MachineRepeatedItemInRegion {
 
   void addInputParam(int InputIndex, int Index);
   void addOutputParam(int OutputIndex, int Index);
+  //lzc,用来切割MBB，在MI之前切割，MI以及之后的指令都放入新块
+  //todo,完善，最好能完全完成该逻辑
+  MachineBasicBlock * splitMBB(MachineBasicBlock *MBB, MachineInstr *MI);
 
 private:
   void printInfo();
@@ -270,7 +273,7 @@ struct InstructionMapper {
   unsigned LegalInstrNumber = 0;
 
   /// Correspondence from \p MachineInstrs to unsigned integers.
-  DenseMap<MachineInstr *, unsigned, MachineInstrExpressionTrait>
+  DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarTrait>
       InstructionIntegerMap;
 
   /// Correspondence between \p MachineBasicBlocks and target-defined flags.
@@ -318,7 +321,7 @@ struct InstructionMapper {
     InstrListForMBB.push_back(It);
     MachineInstr &MI = *It;
     bool WasInserted;
-    DenseMap<MachineInstr *, unsigned, MachineInstrExpressionTrait>::iterator
+    DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarTrait>::iterator
         ResultIt;
     std::tie(ResultIt, WasInserted) =
         InstructionIntegerMap.insert(std::make_pair(&MI, LegalInstrNumber));
@@ -435,8 +438,11 @@ struct InstructionMapper {
       case InstrType::Legal:
         MINumber = mapToLegalUnsigned(It, CanOutlineWithPrevInstr, HaveLegalRange,
                            NumLegalInBlock, UnsignedVecForMBB, InstrListForMBB);
-        OS << "   " << MINumber << "   ";
-        It->dump();
+        // if (Debug)
+        // {
+          OS << "   " << MINumber << "   ";
+          It->dump();
+        // }
         break;
 
       case InstrType::LegalTerminator:
@@ -539,6 +545,7 @@ public:
   InstructionMapper &Mapper;
   std::vector<MRARegionGroup *> CandidateList;
   std::vector<MRARegionGroup *> IntraBlockCandidateList;
+  SmallVector<MachineBasicBlock*, 8> BlocksToErase;
 
   DenseSet<MachineBasicBlock *> NonSplittableBlockSet;
   std::vector<MachineBasicBlock *> BlocksToDelete;
@@ -547,6 +554,7 @@ public:
   std::vector<MachineFunction *> CreatedMergedFuncList;
   std::set<MachineFunction *> AffectedFuncs;
   MachineModuleInfo &MMI;//需要获得的MIR层信息
+  //TargetInstrInfo &TII;
 
   MachineRegionAbstractManager(Module &M0, MachineModuleInfo &MMI, InstructionMapper &Mapper) : M(M0), MMI(MMI), Mapper(Mapper) {};
 
@@ -561,6 +569,8 @@ public:
   bool getAndMergeCandidateList(
       std::vector<RepeatedInfos::RepeatedSubstringByS *> &RSList,
       std::vector<MachineBasicBlock::iterator> &InstrList, MachineRegionAbstract &MRA);
+
+  
 
   // mid level
   void analysisRegionGroup(MRARegionGroup *Group, MachineRegionMergeInfo &MRMI);
@@ -577,8 +587,9 @@ public:
   void updateNonSplittableBlockSet(MachineRepeatedItemInRegion *Region);
   void removeFromNonSplittableBlockSet(MachineRepeatedItemInRegion *Region);
   int getFinallBenefit(MachineRegionMergeInfo &MRMI) { return 1; }
-  bool replaceCall(MRARegionGroup *Group,
-                                        MachineRegionMergeInfo &MRMI);
+  bool replaceCall(MRARegionGroup *Group, MachineRegionMergeInfo &MRMI);
+  bool eraseSourceRegion();
+  //TargetInstrInfo getCurrentModuleTII();
 
   //工具，用于打印变量
   void printMIR();

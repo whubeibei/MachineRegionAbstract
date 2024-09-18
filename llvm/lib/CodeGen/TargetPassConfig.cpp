@@ -139,6 +139,11 @@ static cl::opt<RunOutliner> EnableMachineOutliner(
                           "Disable all outlining"),
                // Sentinel value for unspecified option.
                clEnumValN(RunOutliner::AlwaysOutline, "", "")));
+// Enable or disable the MachineRegionAbstract.
+static cl::opt<bool> EnableMachineRegionAbstract(
+    "enable-machine-region-abstract",
+    cl::desc("Enable the Machine Region Abstract pass"),
+    cl::Hidden, cl::init(false));
 // Enable or disable FastISel. Both options are needed, because
 // FastISel is enabled by default with -fast, and we wish to be
 // able to enable or disable fast-isel independently from -O0.
@@ -1211,7 +1216,11 @@ void TargetPassConfig::addMachinePasses() {
   }
 
   //测试,MachineRegionAbstractPass
-  addPass(createMachineRegionAbstractPass(true));
+  if (EnableMachineRegionAbstract)
+  {
+      addPass(createMachineRegionAbstractPass(true));
+  }
+
 
   // Machine function splitter uses the basic block sections feature. Both
   // cannot be enabled at the same time. Basic block sections takes precedence.

@@ -660,6 +660,87 @@ bool MachineInstr::isIdenticalTo(const MachineInstr &Other,
   return true;
 }
 
+//新增指令相似判断
+//用于判断两条指令是否相似（用于MachineRegionabstract）
+//todo,将hash映射单独提取出来
+bool MachineInstr::isSimilarTo(const MachineInstr &Other,
+                                 MICheckType Check) const {
+  // If opcodes or number of operands are not the same then the two
+  // instructions are obviously not identical.
+  if (Other.getOpcode() != getOpcode() ||
+      Other.getNumOperands() != getNumOperands())
+    return false;
+
+  if (isBundle()) {
+    // We have passed the test above that both instructions have the same
+    // opcode, so we know that both instructions are bundles here. Let's compare
+    // MIs inside the bundle.
+    assert(Other.isBundle() && "Expected that both instructions are bundles.");
+    MachineBasicBlock::const_instr_iterator I1 = getIterator();
+    MachineBasicBlock::const_instr_iterator I2 = Other.getIterator();
+    // Loop until we analysed the last intruction inside at least one of the
+    // bundles.
+    while (I1->isBundledWithSucc() && I2->isBundledWithSucc()) {
+      ++I1;
+      ++I2;
+      if (!I1->isSimilarTo(*I2, Check))
+        return false;
+    }
+    // If we've reached the end of just one of the two bundles, but not both,
+    // the instructions are not identical.
+    if (I1->isBundledWithSucc() || I2->isBundledWithSucc())
+      return false;
+  }
+
+  // Check operands to make sure they match.
+  for (unsigned i = 0, e = getNumOperands(); i != e; ++i) {
+    const MachineOperand &MO = getOperand(i);
+    const MachineOperand &OMO = Other.getOperand(i);
+
+    //增加对跳转指令的特殊处理
+    //todo,此处忽略的应该是跳转块名称，不同指令,位置可能不一致
+    if (Other.isBranch() && i == 0 && MO.isMBB()) {
+      continue;
+    }
+
+    if (!MO.isReg()) {
+      if (!MO.isIdenticalTo(OMO))
+        return false;
+      continue;
+    }
+
+    // Clients may or may not want to ignore defs when testing for equality.
+    // For example, machine CSE pass only cares about finding common
+    // subexpressions, so it's safe to ignore virtual register defs.
+    if (MO.isDef()) {
+      if (Check == IgnoreDefs)
+        continue;
+      else if (Check == IgnoreVRegDefs) {
+        if (!Register::isVirtualRegister(MO.getReg()) ||
+            !Register::isVirtualRegister(OMO.getReg()))
+          if (!MO.isIdenticalTo(OMO))
+            return false;
+      } else {
+        if (!MO.isIdenticalTo(OMO))
+          return false;
+        if (Check == CheckKillDead && MO.isDead() != OMO.isDead())
+          return false;
+      }
+    } else {
+      if (!MO.isIdenticalTo(OMO))
+        return false;
+      if (Check == CheckKillDead && MO.isKill() != OMO.isKill())
+        return false;
+    }
+  }
+  // If DebugLoc does not match then two debug instructions are not identical.
+  if (isDebugInstr())
+    if (getDebugLoc() && Other.getDebugLoc() &&
+        getDebugLoc() != Other.getDebugLoc())
+      return false;
+  return true;
+}
+
 const MachineFunction *MachineInstr::getMF() const {
   return getParent()->getParent();
 }
@@ -723,6 +804,7 @@ bool MachineInstr::shouldUpdateCallSiteInfo() const {
   return isCandidateForCallSiteEntry();
 }
 
+//todo
 //lzc添加，不完善
 //获得终结指令相应的操作码，根据操作码的类型获得其后继块数。
 //该方法受不同指令集规范的影响，在IR中相应的文件Instruction.def定义了指令的规范
@@ -732,11 +814,6 @@ unsigned MachineInstr::getNumSuccessors() {
   unsigned numSuccessors = 0;
 
   switch (getOpcode()) {
-  case TargetOpcode::G_BR:
-  case TargetOpcode::G_BRINDIRECT:
-    // 无条件分支，通常有一个后继
-    numSuccessors = 1;
-    break;
   case TargetOpcode::G_BRCOND:
     // 条件分支，通常有两个后继
     numSuccessors = 2;
@@ -755,12 +832,19 @@ unsigned MachineInstr::getNumSuccessors() {
   //   }
   //   break;
   default:
-    llvm_unreachable("Unknown terminator opcode");
+    case TargetOpcode::G_BR:
+  case TargetOpcode::G_BRINDIRECT:
+  // case X86::JMP_1:
+    // 无条件分支，通常有一个后继
+    numSuccessors = 1;
+    break;
+    // llvm_unreachable("Unknown terminator opcode");
   }
 
   return numSuccessors;
 }
 
+// fixme，放在特定目标中实现
 //lzc getFirstSuccessor
 //用来获得第一个后继块
 MachineBasicBlock *MachineInstr::getFirstSuccessor() const {
@@ -777,7 +861,8 @@ MachineBasicBlock *MachineInstr::getFirstSuccessor() const {
     // Add cases for other terminator instructions as needed
 
     default:
-      llvm_unreachable("Unknown terminator instruction!");
+      //llvm_unreachable("Unknown terminator instruction!");
+      return getOperand(0).getMBB();
   }
 }
 
@@ -2139,6 +2224,72 @@ MachineInstrExpressionTrait::getHashValue(const MachineInstr* const &MI) {
   unsigned result = hash_combine_range(HashComponents.begin(), HashComponents.end());
   return result;
 }
+
+// unsigned
+// MachineInstrExpressionSimilarTrait::getHashValue(const MachineInstr* const &MI) {
+//   // Build up a buffer of hash code components.
+//   SmallVector<size_t, 16> HashComponents;
+//   HashComponents.reserve(MI->getNumOperands() + 1);
+//   HashComponents.push_back(MI->getOpcode());
+//   //增加对跳转指令的特殊处理
+//   if (MI->isBranch()) // 若是跳转指令，则忽略第一个操作数，即目标地址
+//   {
+//     /* code */
+//   }
+  
+//   for (const MachineOperand &MO : MI->operands()) {
+//     if (MO.isReg() && MO.isDef() && Register::isVirtualRegister(MO.getReg()))
+//       continue;  // Skip virtual register defs.
+
+//     HashComponents.push_back(hash_value(MO));
+//   }
+//   unsigned result = hash_combine_range(HashComponents.begin(), HashComponents.end());
+//   return result;
+// }
+
+unsigned
+MachineInstrExpressionSimilarTrait::getHashValue(const MachineInstr* const &MI) {
+  // Build up a buffer of hash code components.
+  SmallVector<size_t, 16> HashComponents;
+  HashComponents.reserve(MI->getNumOperands() + 1);
+  HashComponents.push_back(MI->getOpcode());
+
+  // 增加对跳转指令的特殊处理
+  bool isBranchInstruction = false;
+  // if (MI->getOpcode() == X86::JMP_1 || MI->getOpcode() == X86::JCC || MI->getOpcode() == X86::JMP_4) {
+  //   isBranchInstruction = true;
+  // }
+
+    //增加对跳转指令的特殊处理
+  if (MI->isBranch()) // 若是跳转指令，则忽略第一个操作数，即目标地址
+  {
+    isBranchInstruction = true;
+  }
+
+  for (unsigned i = 0; i < MI->getNumOperands(); ++i) {
+    const MachineOperand &MO = MI->getOperand(i);
+
+    // 如果是跳转指令，忽略第一个操作数
+    if (isBranchInstruction && i == 0) {
+      //实现的时候不忽略，忽略会导致映射部分会填充一个无关值，导致映射不同
+      //此时我们设置一个固定值 0?
+      HashComponents.push_back(0);
+      continue;
+    }
+
+    // 跳过虚拟寄存器定义
+    if (MO.isReg() && MO.isDef() && Register::isVirtualRegister(MO.getReg())) {
+      continue;
+    }
+
+    // 添加操作数的哈希值到哈希组件中
+    HashComponents.push_back(hash_value(MO));
+  }
+
+  unsigned result = hash_combine_range(HashComponents.begin(), HashComponents.end());
+  return result;
+}
+
 
 void MachineInstr::emitError(StringRef Msg) const {
   // Find the source location cookie.

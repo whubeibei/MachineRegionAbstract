@@ -726,6 +726,11 @@ MachineFunction *MachineOutliner::createOutlinedFunction(
     DB.finalize();
   }
 
+  if (!MF.verify())
+  {
+    return nullptr;
+  }
+
   return &MF;
 }
 
@@ -929,6 +934,8 @@ void MachineOutliner::emitInstrCountChangedRemark(
   // Iterate over each function in the module and emit remarks.
   // Note that we won't miss anything by doing this, because the outliner never
   // deletes functions.
+  int total = 0;
+  unsigned TotoalFnCountBefore = 0;
   for (const Function &F : M) {
     MachineFunction *MF = MMI.getMachineFunction(F);
 
@@ -948,6 +955,7 @@ void MachineOutliner::emitInstrCountChangedRemark(
     // to that.
     if (It != FunctionToInstrCount.end())
       FnCountBefore = It->second;
+      TotoalFnCountBefore += FnCountBefore;
 
     // Compute the delta and emit a remark if there was a change.
     int64_t FnDelta = static_cast<int64_t>(FnCountAfter) -
@@ -955,24 +963,36 @@ void MachineOutliner::emitInstrCountChangedRemark(
     if (FnDelta == 0)
       continue;
 
-    MachineOptimizationRemarkEmitter MORE(*MF, nullptr);
-    MORE.emit([&]() {
-      MachineOptimizationRemarkAnalysis R("size-info", "FunctionMISizeChange",
-                                          DiagnosticLocation(), &MF->front());
-      R << DiagnosticInfoOptimizationBase::Argument("Pass", "Machine Outliner")
-        << ": Function: "
-        << DiagnosticInfoOptimizationBase::Argument("Function", F.getName())
-        << ": MI instruction count changed from "
-        << DiagnosticInfoOptimizationBase::Argument("MIInstrsBefore",
-                                                    FnCountBefore)
-        << " to "
-        << DiagnosticInfoOptimizationBase::Argument("MIInstrsAfter",
-                                                    FnCountAfter)
-        << "; Delta: "
-        << DiagnosticInfoOptimizationBase::Argument("Delta", FnDelta);
-      return R;
-    });
+    // MachineOptimizationRemarkEmitter MORE(*MF, nullptr);
+    // MORE.emit([&]() {
+    //   MachineOptimizationRemarkAnalysis R("size-info", "FunctionMISizeChange",
+    //                                       DiagnosticLocation(), &MF->front());
+    //   R << DiagnosticInfoOptimizationBase::Argument("Pass", "Machine Outliner")
+    //     << ": Function: "
+    //     << DiagnosticInfoOptimizationBase::Argument("Function", F.getName())
+    //     << ": MI instruction count changed from "
+    //     << DiagnosticInfoOptimizationBase::Argument("MIInstrsBefore",
+    //                                                 FnCountBefore)
+    //     << " to "
+    //     << DiagnosticInfoOptimizationBase::Argument("MIInstrsAfter",
+    //                                                 FnCountAfter)
+    //     << "; Delta: "
+    //     << DiagnosticInfoOptimizationBase::Argument("Delta", FnDelta);
+    //   return R;
+    // });
+
+    if (FnDelta != 0) {
+      total+=FnDelta;
+      // Instead of using remarks, simply print out the results.
+      llvm::outs() << "Machine Outliner: Function: " << F.getName()
+                   << " - MI instruction count changed from " << FnCountBefore
+                   << " to " << FnCountAfter
+                   << "; Delta: " << FnDelta << "\n";
+    }
+    
   }
+  llvm::outs() << "\n原指令数：     " << TotoalFnCountBefore;
+  llvm::outs() << "\n总收益：     " << total;
 }
 
 bool MachineOutliner::runOnModule(Module &M) {
