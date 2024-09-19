@@ -9108,17 +9108,21 @@ X86InstrInfo::getRAType(MachineBasicBlock::iterator &MIT,  unsigned Flags) const
   if (isTailCall(MI))
     return outliner::InstrType::Legal;
 
-  //lzc,
-  // 终结指令也可以抽象
+  // //lzc,
+  // // 终结指令也可以抽象
   // // Is this the terminator of a basic block?
   // if (MI.isTerminator() || MI.isReturn()) {
+    
+  //   // 针对块内抽象末尾冗余为跳转指令的情况，此时提取跳转指令会出错
+  //   // 将跳转指令标记为需要处理的指令
+  //   // 当跳转指令位于冗余末尾时，不将其视为冗余
 
-  //   // Does its parent have any successors in its MachineFunction?
-  //   if (MI.getParent()->succ_empty())
-  //     return outliner::InstrType::Legal;
+  //   // // Does its parent have any successors in its MachineFunction?
+  //   // if (MI.getParent()->succ_empty())
+  //   //   return outliner::InstrType::Legal;
 
-  //   // It does, so we can't tail call it.
-  //   return outliner::InstrType::Illegal;
+  //   // // It does, so we can't tail call it.
+  //   // return outliner::InstrType::Illegal;
   // }
 
   // Don't outline anything that modifies or reads from the stack pointer.

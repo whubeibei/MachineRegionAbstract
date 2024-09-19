@@ -15,6 +15,7 @@
 #define LLVM_SUPPORT_SUFFIXTREE_REPEATED_INFOS_H
 
 #include "llvm/Support/SuffixTree.h"
+#include <set>
 #include <map>
 
 namespace llvm {
@@ -23,6 +24,7 @@ namespace llvm {
 class RepeatedInfos {
   llvm::ArrayRef<unsigned> Str;
   unsigned int RepeatedStrLenLimit = 2;
+
 
 public:
   struct RepeatedSubstringByS {
@@ -164,6 +166,27 @@ public:
                     TotalBenefit += RS->getPredictBenefit(CreateFuncOverhead);
                   });
     return TotalBenefit;
+  }
+
+  //在后缀树层面剔除重复子串尾数为跳转指令的冗余
+  static void eliminateJumpEndStr(std::set<unsigned> JumpOpds,
+                                  std::vector<RepeatedSubstringByS *> RSList,
+                                  std::vector<unsigned> &InstrList){
+    for (RepeatedSubstringByS * RS : RSList)
+    {
+      // 分析RS，若结尾为跳转指令，则剔除最后一条指令，不将跳转视为冗余
+      unsigned endPtr = RS->StartIndices[0] + RS->Length - 1;
+      unsigned endOpd = InstrList[endPtr];
+      if (JumpOpds.count(endOpd))
+      {
+        RS->Length --; //通过减少长度来剔除末尾指令
+        unsigned IllegalInstrNumber = -3;
+        InstrList[endPtr] = IllegalInstrNumber;//同时更新了StrMap
+      }
+      
+      
+    }
+    
   }
 
 private:

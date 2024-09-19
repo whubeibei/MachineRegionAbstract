@@ -3150,17 +3150,22 @@ bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
 //   return true;
 // }
 
-void MachineRegionAbstractManager::printMIR() {
+unsigned MachineRegionAbstractManager::printMIR() {
+  unsigned TotalInstrNums = 0;
+  raw_ostream &OS = dbgs();
+  OS << "打印MIR\n";
    for (Function &F : M)
    {
     if (F.empty())
       continue;
 
     MachineFunction *MF = MMI.getMachineFunction(F);
+    if (!MF)
+      continue;
     MF->dump();
-    
+    TotalInstrNums += MF->getInstructionCount();
    }
-   
+   return TotalInstrNums;
 }
 
 //自定义打印MIR中MF的MIs
@@ -3206,6 +3211,21 @@ static void printCustomMIR(Module &M, MachineModuleInfo &MMI){
 //   const TargetInstrInfo &TII = *STI.getInstrInfo();
 // }
 
+unsigned getTotalInstrNums(const Module &M, const MachineModuleInfo &MMI){
+  unsigned TotalInstrNums = 0;
+  for (const Function &F : M) {
+    MachineFunction *MF = MMI.getMachineFunction(F);
+
+    // We only care about MI counts here. If there's no MachineFunction at this
+    // point, then there won't be after the outliner runs, so let's move on.
+    if (!MF)
+      continue;
+    TotalInstrNums += MF->getInstructionCount();
+    //FunctionToInstrCount[F.getName().str()] = MF->getInstructionCount();
+  }
+  return TotalInstrNums;
+}
+
 bool MachineRegionAbstract::runOnModule(Module &M) {
   // Check if there's anything in the module. If it's empty, then there's
   // nothing to outline.
@@ -3213,6 +3233,8 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
     return false;
 
   MachineModuleInfo &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
+
+  llvm::outs() << getTotalInstrNums(M,MMI);
 
   // Number to append to the current outlined function.
   unsigned OutlinedFunctionNum = 0;
@@ -3261,6 +3283,9 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   } else if (OverlapEliminateMode.getValue() == 1) {
     //testElimateInterOverlap(NewRSList, StrMap);
   }
+
+  // 加入对冗余尾指令为跳转的剔除
+  RepeatedInfos::eliminateJumpEndStr(JumpOpds,NewRSList,Mapper.UnsignedVec);
 
     // #ifdef ANALYSIS_TREE_DEBUG
   // unsigned TotalBenefit = analysisOld(ST, RepeatedLowerLimit);
@@ -3323,6 +3348,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
       MRAM->mergeCandidateList();
       MRAM->eraseSourceRegion();
   MRAM->printMIR();
+  llvm::outs() << getTotalInstrNums(M,MMI);
   return true;
 
 }

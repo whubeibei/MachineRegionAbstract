@@ -38,6 +38,8 @@ struct MachineRepeatedItemInRegion;
 struct MachineRegionMergeInfo;
 typedef std::vector<MachineRepeatedItemInRegion *> MRARegionGroup;
 
+static std::set<unsigned> JumpOpds;
+
 #pragma region Lzc
 struct LzcRegion {
   MachineBasicBlock *EntryBlock; // 第一个块
@@ -342,6 +344,12 @@ struct InstructionMapper {
     assert(LegalInstrNumber != DenseMapInfo<unsigned>::getTombstoneKey() &&
            "Tried to assign DenseMap tombstone or empty key to instruction.");
 
+    if (MI.isBranch())
+    {
+      JumpOpds.insert(MINumber); //记录跳转指令
+    }
+    
+
     return MINumber;
   }
 
@@ -592,7 +600,7 @@ public:
   //TargetInstrInfo getCurrentModuleTII();
 
   //工具，用于打印变量
-  void printMIR();
+  unsigned printMIR();
 
   //void setMapper(InstructionMapper)
 };
