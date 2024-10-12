@@ -22,7 +22,7 @@
 #include <tuple>
 #include <vector>
 #include <iostream>
-
+#include <stack>
 
 
 
@@ -730,6 +730,12 @@ bool MachineRepeatedItemInRegion::splitRegion(
   assert(!RegionSplit && "Region already split!");
   // need to update start region entry
 
+  if (RepeatedInstrDatas.size() < 2)
+  {
+    return false;
+  }
+  
+
   MachineInstr *StartInst, *EndInst;
   switch (EntryBlockSplitMode) {
   case 1:
@@ -770,14 +776,15 @@ bool MachineRepeatedItemInRegion::splitRegion(
     // lzc：取消对新machinbasicblock的命名，只做分割操作
     // 获取 StartInst 前一条指令
     MachineBasicBlock::iterator It = StartInst->getIterator();
-    if (It != PrevBB->begin()) {//fixme,暂时防止割空，后期可完善切割逻辑
-      --It; // 获取前一条指令
-      // llvm::dbgs() << "StartInst is the first instruction in the block.\n";
-      // return 1;
-    }
+    // if (It != PrevBB->begin()) {//fixme,暂时防止割空，后期可完善切割逻辑
+    //   --It; // 获取前一条指令进行切割
+    //   // llvm::dbgs() << "StartInst is the first instruction in the block.\n";
+    //   // return 1;
+    // }
     MachineInstr *SplitInst = &*It;
     // 使用 splitAt 函数分割基本块，确保分界指令被包含在新创建的块中 
-    StartBB = PrevBB->splitAt(*SplitInst);
+    // StartBB = PrevBB->splitAt(*SplitInst);
+    StartBB = splitMBB(PrevBB,SplitInst);
     SplitedStart = true;
     AffectedFuncs.insert(PrevBB->getParent());
     MinRegion->updateEntry(StartBB);
@@ -800,17 +807,23 @@ bool MachineRepeatedItemInRegion::splitRegion(
   case 2:
     EndInst = RepeatedInstrDatas[RepeatedInstrDatas.size() - 1];
     if (EndInst->isTerminator()) {
-      //如果是终结符，则特殊处理
-      if (EndInst->getNumSuccessors() == 1) {
-        EndBB = EndInst->getParent();
-        //FollowBB = EndInst->getFirstSuccessor();//lzc?,该followBB未使用
-        EndInst = nullptr;
-        //此时不需要分割
-      } else {
-        //如果有多个succ，则我们认为EndInst不能被abstract,直接从EndInst这里分割
+      // //如果是终结符，则特殊处理
+      // if (EndInst->getNumSuccessors() == 1) {
+      //   EndBB = EndInst->getParent();
+      //   //FollowBB = EndInst->getFirstSuccessor();//lzc?,该followBB未使用
+      //   EndInst = nullptr;
+      //   //此时不需要分割
+      // } else {
+      //   //如果有多个succ，则我们认为EndInst不能被abstract,直接从EndInst这里分割
+      //   RepeatedInstrDatas.pop_back();
+      //   RepeatedInstSet.remove(EndInst);
+      // }
+      
+      //lzc，修改，对endinst是终结指令，不予提取
+//      if (EndInst->getNumSuccessors() == 1) {
         RepeatedInstrDatas.pop_back();
         RepeatedInstSet.remove(EndInst);
-      }
+//      }
     } else {
       //否则需要向后移动一位用来做截断
       EndInst = EndInst->getNextNode();
@@ -849,6 +862,7 @@ bool MachineRepeatedItemInRegion::splitRegion(
     }
     MachineInstr *SplitInst = &*It;
     FollowBB = EndBB->splitAt(*SplitInst);
+    // FollowBB = splitMBB(EndBB,SplitInst);
     SplitedEnd = true;
     AffectedFuncs.insert(EndBB->getParent());
 
@@ -889,6 +903,12 @@ void MachineRegionAbstractManager::analysisRegionGroup(MRARegionGroup *Group,
   if (Group->size() < 2) {
     return;
   }
+
+  if (Group->front()->RepeatedInstrDatas.size() < 2)
+  {
+    return;
+  }
+  
   DenseMap<MachineFunction *, MRARegionGroup *> *FuncItemMap =
       new DenseMap<MachineFunction *, MRARegionGroup *>();
 
@@ -919,60 +939,6 @@ void MachineRegionAbstractManager::analysisRegionGroup(MRARegionGroup *Group,
       (*FuncItemMap)[RegionCandidate->ParentFunc]->push_back(RegionCandidate);
     }
 
-    // // find DefsOutofRegion and UsesOutofRegion;
-    // std::map<Value *, std::vector<Use *>> *DefsFromOut =
-    //     new std::map<Value *, std::vector<Use *>>();
-    // std::map<Value *, std::vector<Use *>> *UsesFromOut =
-    //     new std::map<Value *, std::vector<Use *>>();
-    // // todo
-
-    // // std::vector<BasicBlock *> &BlocksInRegion =
-    // // RepeatedItem->MinRegion->Blocks;
-    // SetVector<MachineBasicBlock *> MBlocksInRegion(
-    //     RegionCandidate->MinRegion->Blocks.begin(),
-    //     RegionCandidate->MinRegion->Blocks.end());
-
-    // for (MachineBasicBlock *MBB : MBlocksInRegion) {
-    //   auto It = MBB->begin();
-    //   while (It != MBB->end()) {
-    //     MachineInstr *MI = &*It;
-    //     for (MachineOperand &MO : MI->operands()) {
-    //       Value *VDef = MO.get();
-    //       if (definedInCaller(BlocksInRegion, VDef)) {
-    //         MRMI.Inputs.insert(VDef);
-    //         RegionCandidate->Inputs.insert(VDef);
-    //         if (DefsFromOut->find(VDef) == DefsFromOut->end()) {
-    //           (*DefsFromOut)[VDef] = {&U};
-    //         } else {
-    //           (*DefsFromOut)[VDef].push_back(&U);
-    //         }
-    //       }
-    //     }
-
-    //     for (Use &X : MI->uses()) {
-    //       User *UU = X.getUser();
-    //       Instruction *II = dyn_cast<Instruction>(UU);
-    //       if (II) {
-    //         if (std::find(BlocksInRegion.begin(), BlocksInRegion.end(),
-    //                       II->getParent()) == BlocksInRegion.end()) {
-    //           MRMI.Outputs.insert(MI);
-    //           RegionCandidate->Outputs.insert(MI);
-
-    //           if (UsesFromOut->find(Inst) == UsesFromOut->end()) {
-    //             (*UsesFromOut)[Inst] = {&X};
-    //           } else {
-    //             (*UsesFromOut)[Inst].push_back(&X);
-    //           }
-    //           break;
-    //         }
-    //       }
-    //     }
-
-    //     It++;
-    //   }
-    // }
-    // MRMI.RegionOutDefMap[RegionCandidate] = DefsFromOut;
-    // MRMI.RegionOutUseMap[RegionCandidate] = UsesFromOut;
   }
 
   // update group
@@ -1012,6 +978,8 @@ void MachineRegionAbstractManager::analysisRegionGroup(MRARegionGroup *Group,
 bool MachineRegionAbstractManager::eraseSourceRegion() {
       // 删除整个区域的所有基本块
       for (MachineBasicBlock *MBB : BlocksToErase) {
+                MachineFunction *MF = MBB->getParent();
+                MF->dump();
         // 删除 MBB 前，先处理它的所有后继或前驱块
         // 清理控制流关系
         MBB->clear();  // 清理前驱后继关系
@@ -1041,6 +1009,119 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
   const TargetSubtargetInfo &STI = MF->getSubtarget();
   const TargetInstrInfo &TII = *STI.getInstrInfo();
 
+      // 处理整个区域的寄存器定义和使用情况
+      SmallSet<Register, 2> UseRegs, DefRegs;//避免重复添加
+      MRARegionCandidate *example = Group->front();
+      MachineFunction *exampleMF = example->MinRegion->Blocks.front()->getParent();
+      const MachineRegisterInfo &MRI = exampleMF->getRegInfo();
+      const TargetRegisterInfo &TRI = *MRI.getTargetRegisterInfo();
+      //使用迭代更新来分析区域的livein和liveout
+      // 创建Def和LiveUse集合
+      DenseMap<MachineBasicBlock *, BitVector> Def;
+      DenseMap<MachineBasicBlock *, BitVector> LiveUse;
+      DenseMap<MachineBasicBlock *, BitVector> LiveIn;
+      DenseMap<MachineBasicBlock *, BitVector> LiveOut;
+
+      // 初始化每个基本块的Def和LiveUse集合
+      for (auto &MBB : *MF) {
+          BitVector DefBV(TRI.getNumRegs());
+          BitVector LiveUseBV(TRI.getNumRegs());
+          
+          // 反向遍历每个基本块的指令，更新Def和LiveUse
+          MachineBasicBlock::iterator StartIt = MBB.front();
+          MachineBasicBlock::iterator EndIt = MBB.back();
+
+          // 在每个块中从下往上遍历
+          for (MachineBasicBlock::reverse_iterator
+                  Iter = EndIt.getReverse(),
+                  Last = std::next(StartIt.getReverse());
+              Iter != Last; Iter++) {
+            MachineInstr *MI = &*Iter;
+            for (MachineOperand &MOP : MI->operands()) {
+              // Skip over anything that isn't a register.
+              if (!MOP.isReg())
+                continue;
+
+              if (MOP.isDef()) {
+                // Introduce DefRegs set to skip the redundant register.
+                // DefRegs.insert(MOP.getReg());
+                DefBV.set(MOP.getReg());  // 记录定义
+                if (!MOP.isDead() && DefBV.test(MOP.getReg()))
+                  // Since the regiester is modeled as defined,
+                  // it is not necessary to be put in use register set.
+                  // UseRegs.erase(MOP.getReg());
+                  LiveUseBV.reset(MOP.getReg());
+              } else if (!MOP.isUndef()) {
+                // Any register which is not undefined should
+                // be put in the use register set.
+                // UseRegs.insert(MOP.getReg());
+                LiveUseBV.set(MOP.getReg());  // 记录使用
+              }
+            }
+            if (MI->isCandidateForCallSiteEntry())
+              MI->getMF()->eraseCallSiteInfo(MI);
+          }
+          
+          Def[&MBB] = DefBV;
+          LiveUse[&MBB] = LiveUseBV;
+          LiveIn[&MBB].resize(TRI.getNumRegs());
+          LiveOut[&MBB].resize(TRI.getNumRegs());
+      }
+
+      bool changed = true;
+      
+      // 迭代计算LiveIn和LiveOut集合
+      while (changed) {
+          changed = false;
+
+          // 反向遍历基本块
+          for (auto MBBIt = MF->rbegin(); MBBIt != MF->rend(); ++MBBIt) {
+              MachineBasicBlock &MBB = *MBBIt;
+              BitVector OldLiveIn = LiveIn[&MBB];
+              
+              // 更新LiveOut集合：从所有后继中取LiveIn的并集
+              BitVector LiveOutBV(TRI.getNumRegs());
+              for (MachineBasicBlock *Succ : MBB.successors()) {
+                  LiveOutBV |= LiveIn[Succ];
+              }
+              LiveOut[&MBB] = LiveOutBV;
+
+              // 更新LiveIn集合
+              BitVector NewLiveIn = LiveUse[&MBB];
+              llvm::BitVector TempDef = Def[&MBB];  // 复制 Def
+              TempDef.flip();                       // 翻转 TempDef
+              llvm::BitVector TempLiveOut = LiveOut[&MBB]; // 复制 LiveOut
+              TempLiveOut &= TempDef;// 执行 LiveOut & ~Def 的操作
+              NewLiveIn |= TempLiveOut;
+              // NewLiveIn |= (LiveOut[&MBB] & ~Def[&MBB]); // LiveUse ∪ (LiveOut - Def)
+              
+              if (NewLiveIn != OldLiveIn) {
+                  changed = true;
+                  LiveIn[&MBB] = NewLiveIn;
+              }
+          }
+      }
+
+      // 处理第一个基本块
+      if (MachineBasicBlock *FirstMBB = &MF->front()) {
+          const BitVector &LiveInBV = LiveIn[FirstMBB];
+          for (unsigned Reg = 0; Reg < TRI.getNumRegs(); ++Reg) {
+              if (LiveInBV.test(Reg)) {
+                  UseRegs.insert(Reg);
+              }
+          }
+      }
+
+      // 处理所有基本块的Def集合
+      for (auto &MBB : *MF) {
+          const BitVector &DefBV = Def[&MBB];
+          for (unsigned Reg = 0; Reg < TRI.getNumRegs(); ++Reg) {
+              if (DefBV.test(Reg)) {
+                  DefRegs.insert(Reg);
+              }
+          }
+      }
+
     // Replace occurrences of the sequence with calls to the new function.
     for (MRARegionCandidate *C : *Group) {
       // MachineBasicBlock &MBB = *(C->RelatedMBlocks.front());
@@ -1068,9 +1149,26 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
       // 处理原区域替换后的控制流关系
       MachineBasicBlock *predMBB = *FirstMBB->pred_begin();
       assert((predMBB && MRABlocks.count(predMBB) == 0) && "predMBB should not be null!");
+      //对于A->B，跳转情况，需要修改跳转指令的目标块
+      // 采用shw regionabstract方法，遍历每一条指令，将目标块修改
+      for (MachineInstr &MI : *predMBB) {
+          // 遍历每条指令的每个操作数
+          for (unsigned i = 0; i < MI.getNumOperands(); ++i) {
+              MachineOperand &MO = MI.getOperand(i);
+              // 检查是否为基本块操作数
+              if (MO.isMBB() && MO.getMBB() == FirstMBB) {
+                  // 替换为 replaceMBB
+                  MO.setMBB(replaceMBB);
+                  
+                  // 打印日志确认替换成功
+                  MI.dump();
+              }
+          }
+      }
+      
+      //对于fallthrough情况，无需额外处理
       predMBB->removeSuccessor(FirstMBB);
       predMBB->addSuccessor(replaceMBB);
-      
 
       MachineBasicBlock *OutSucc = nullptr;
       for (MachineBasicBlock *Succ : LastMBB->successors()) {
@@ -1081,11 +1179,12 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
       }
       assert((OutSucc) && "Out successor of exit machinebasicblock should not be null!");
       LastMBB->removeSuccessor(OutSucc);
-      // 插入跳转指令，跳到 OutSucc
-      // const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
-      DebugLoc DL;  // 如果有调试信息，你可以在这里传入调试位置信息
-      // 根据目标架构插入合适的跳转指令，以下是一个通用示例
-      TII.insertBranch(*replaceMBB, OutSucc, nullptr, {}, DL);
+      // lzc尝试利用fallthrough，不增加跳转指令
+      // // 插入跳转指令，跳到 OutSucc
+      // // const TargetInstrInfo *TII = MF.getSubtarget().getInstrInfo();
+      // DebugLoc DL;  // 如果有调试信息，你可以在这里传入调试位置信息
+      // // 根据目标架构插入合适的跳转指令，以下是一个通用示例
+      // TII.insertBranch(*replaceMBB, OutSucc, nullptr, {}, DL);
       // 添加后继关系
       replaceMBB->addSuccessor(OutSucc);
 
@@ -1094,65 +1193,62 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
       std::queue<MachineBasicBlock*> WorkQueue;
       // 集合，用于防止重复处理块
       SmallSet<MachineBasicBlock*, 16> Visited;
-      // 处理整个区域的寄存器定义和使用情况
-      SmallSet<Register, 2> UseRegs, DefRegs;//避免重复添加
 
-      const MachineRegisterInfo &MRI = OriginalMF->getRegInfo();
-      const TargetRegisterInfo &TRI = *MRI.getTargetRegisterInfo();
-      LivePhysRegs LiveRegs;
-      LiveRegs.init(TRI);  // TRI 是 TargetRegisterInfo
-      LiveRegs.addLiveIns(*replaceMBB);
 
-      // 将区域的出口块加入队列
-      WorkQueue.push(LastMBB);
-      Visited.insert(LastMBB);
+      // LivePhysRegs LiveRegs;
+      // LiveRegs.init(TRI);  // TRI 是 TargetRegisterInfo
+      // LiveRegs.addLiveIns(*replaceMBB);
 
-      while (!WorkQueue.empty()) {
-          MachineBasicBlock *SourceBB = WorkQueue.front();  // 获取队列中的第一个元素
-          WorkQueue.pop();  // 然后移除该元素
-          MachineBasicBlock::iterator StartIt = SourceBB->front();
-          MachineBasicBlock::iterator EndIt = SourceBB->back();
+      // // 将区域的出口块加入队列
+      // WorkQueue.push(LastMBB);
+      // Visited.insert(LastMBB);
 
-          // 在每个块中从下往上遍历
-          for (MachineBasicBlock::reverse_iterator
-                  Iter = EndIt.getReverse(),
-                  Last = std::next(StartIt.getReverse());
-              Iter != Last; Iter++) {
-            MachineInstr *MI = &*Iter;
-            for (MachineOperand &MOP : MI->operands()) {
-              // Skip over anything that isn't a register.
-              if (!MOP.isReg())
-                continue;
+      // while (!WorkQueue.empty()) {
+      //     MachineBasicBlock *SourceBB = WorkQueue.front();  // 获取队列中的第一个元素
+      //     WorkQueue.pop();  // 然后移除该元素
+      //     MachineBasicBlock::iterator StartIt = SourceBB->front();
+      //     MachineBasicBlock::iterator EndIt = SourceBB->back();
 
-              if (MOP.isDef()) {
-                // Introduce DefRegs set to skip the redundant register.
-                DefRegs.insert(MOP.getReg());
-                if (!MOP.isDead() && UseRegs.count(MOP.getReg()))
-                  // Since the regiester is modeled as defined,
-                  // it is not necessary to be put in use register set.
-                  UseRegs.erase(MOP.getReg());
-              } else if (!MOP.isUndef()) {
-                // Any register which is not undefined should
-                // be put in the use register set.
-                UseRegs.insert(MOP.getReg());
-              }
-            }
-            if (MI->isCandidateForCallSiteEntry())
-              MI->getMF()->eraseCallSiteInfo(MI);
-          }
+      //     // 在每个块中从下往上遍历
+      //     for (MachineBasicBlock::reverse_iterator
+      //             Iter = EndIt.getReverse(),
+      //             Last = std::next(StartIt.getReverse());
+      //         Iter != Last; Iter++) {
+      //       MachineInstr *MI = &*Iter;
+      //       for (MachineOperand &MOP : MI->operands()) {
+      //         // Skip over anything that isn't a register.
+      //         if (!MOP.isReg())
+      //           continue;
 
-          // 如果当前块是入口块，结束
-          if (SourceBB == FirstMBB)
-              continue;
+      //         if (MOP.isDef()) {
+      //           // Introduce DefRegs set to skip the redundant register.
+      //           DefRegs.insert(MOP.getReg());
+      //           if (!MOP.isDead() && UseRegs.count(MOP.getReg()))
+      //             // Since the regiester is modeled as defined,
+      //             // it is not necessary to be put in use register set.
+      //             UseRegs.erase(MOP.getReg());
+      //         } else if (!MOP.isUndef()) {
+      //           // Any register which is not undefined should
+      //           // be put in the use register set.
+      //           UseRegs.insert(MOP.getReg());
+      //         }
+      //       }
+      //       if (MI->isCandidateForCallSiteEntry())
+      //         MI->getMF()->eraseCallSiteInfo(MI);
+      //     }
 
-          // 将前驱块逆序加入队列
-          for (auto Pred = SourceBB->pred_rbegin(); Pred != SourceBB->pred_rend(); ++Pred) {
-              if (!Visited.count(*Pred)) {
-                  WorkQueue.push(*Pred);
-                  Visited.insert(*Pred);
-              }
-          }
-      }
+      //     // 如果当前块是入口块，结束
+      //     if (SourceBB == FirstMBB)
+      //         continue;
+
+      //     // 将前驱块逆序加入队列
+      //     for (auto Pred = SourceBB->pred_rbegin(); Pred != SourceBB->pred_rend(); ++Pred) {
+      //         if (!Visited.count(*Pred)) {
+      //             WorkQueue.push(*Pred);
+      //             Visited.insert(*Pred);
+      //         }
+      //     }
+      // }
 
       for (const Register &I : DefRegs) {
         CallInst->addOperand(MachineOperand::CreateReg(I, true, true));
@@ -1223,7 +1319,7 @@ MachineBasicBlock * MachineRepeatedItemInRegion::splitMBB(MachineBasicBlock *MBB
       --It; // 获取前一条指令
       // llvm::dbgs() << "StartInst is the first instruction in the block.\n";
       // return 1;
-    }else return nullptr;
+    }else return MBB; // 当It为开头指令时，不进行切割,返回当前基本块指针
     MachineInstr *SplitInst = &*It;
     // 使用 splitAt 函数分割基本块，确保分界指令被包含在新创建的块中 
     MachineBasicBlock *NewMBB = MBB->splitAt(*SplitInst);
@@ -1351,7 +1447,16 @@ bool MachineRegionAbstractManager::mergeRegionGroup(MRARegionGroup *Group,
 int MachineRegionAbstractManager::getGroupBenefit(MachineRegionMergeInfo &MRMI) {
   // TargetTransformInfo TTI(M.getDataLayout());
   // return MRMI.getNewBenefit(TTI);
-  return RAInterBenefitLimit.getValue() + 1;
+  int N = MRMI.CurrGroup->size();
+  if (N < 2) {
+    return 0;
+  }
+  int MatchLength = (*MRMI.CurrGroup)[0]->RepeatedInstrDatas.size();
+  int MatchBenefit = MatchLength * (N - 1);
+  // int Overhead = getCallOverhead() + getMergeFunctionOverhead();
+  int Overhead = N + 1;
+  return MatchBenefit - Overhead;
+  // return RAInterBenefitLimit.getValue() + 1;
   //Todo,lzc
 }
 
@@ -1394,17 +1499,7 @@ bool MachineRegionAbstractManager::mergeCandidateList() {
       int Benefit = getGroupBenefit(MRMI);//lzc todo代价模型
       int LowerLimit =
           RABenefitModel.getValue() == 0 ? 0 : RAIntraBenefitLimit.getValue();
-      // if (Benefit > LowerLimit) {
-      //   if (mergeRegionGroup(CandidatePointer, MRMI)) {
-      //     if (Debug)
-      //       errs() << "Intra-BB MF_" << CreatedMergedFunctionNum - 1
-      //              << " benefit:\t" << Benefit << "\n";
-      //     TotalBenefit += Benefit;
-      //     if (CreatedMergedFunctionNum >= RACreatedFuncUpperLimit.getValue()) {
-      //       break;
-      //     }
-      //   }
-      // }
+      if (Benefit > LowerLimit) {
         if (mergeRegionGroup(CandidatePointer, MRMI)) {
           if (Debug)
             errs() << "Intra-BB MF_" << CreatedMergedFunctionNum - 1
@@ -1413,8 +1508,18 @@ bool MachineRegionAbstractManager::mergeCandidateList() {
           if (CreatedMergedFunctionNum >= RACreatedFuncUpperLimit.getValue()) {
             break;
           }
-        
         }
+      }
+        // if (mergeRegionGroup(CandidatePointer, MRMI)) {
+        //   if (Debug)
+        //     errs() << "Intra-BB MF_" << CreatedMergedFunctionNum - 1
+        //            << " benefit:\t" << Benefit << "\n";
+        //   TotalBenefit += Benefit;
+        //   if (CreatedMergedFunctionNum >= RACreatedFuncUpperLimit.getValue()) {
+        //     break;
+        //   }
+        
+        // }
     }
   }
 
@@ -1951,7 +2056,7 @@ MachineRegionAbstractManager::createMergedFunc(MRARegionGroup *Group,
 // }
 
 bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
-                                                  MachineRegionMergeInfo &MRMI) {
+                                                   MachineRegionMergeInfo &MRMI) {
   // 初始化
   MachineFunction *NewFunction = MRMI.MergedFunc;
 
@@ -1981,18 +2086,37 @@ bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
   }
 
     //广度优先进行还原
-    // 队列，用于按广度优先顺序处理块
-    std::queue<MachineBasicBlock*> WorkQueue;
+    // // 队列，用于按广度优先顺序处理块
+    // std::queue<MachineBasicBlock*> WorkQueue;
+    // 深度优先进行还原
+    // 栈，用于按深度优先顺序处理块
+    std::stack<MachineBasicBlock*> WorkStack;
     // 集合，用于防止重复处理块
     SmallSet<MachineBasicBlock*, 16> Visited;
+    // 被fallthrough的块集合
+    SmallSet<MachineBasicBlock*, 16> FallThroughed;
 
-    // 将入口块加入队列
-    WorkQueue.push(EntryBlock);
+    //fixme,初始化被fallthrough的块集合，可以在别处遍历的时候初始
+    for (MachineBasicBlock *MBB : MinRegion->Blocks)
+    {
+      MachineBasicBlock *fallThroughedMBB = MBB->getFallThrough();
+      if (fallThroughedMBB)
+      {
+        FallThroughed.insert(fallThroughedMBB);
+      }   
+    }
+    // // 将入口块加入队列
+    // WorkQueue.push(EntryBlock);
+    // Visited.insert(EntryBlock);
+    // 将入口块加入栈
+    WorkStack.push(EntryBlock);
     Visited.insert(EntryBlock);
 
-    while (!WorkQueue.empty()) {
-        MachineBasicBlock *SourceBB = WorkQueue.front();  // 获取队列中的第一个元素
-        WorkQueue.pop();  // 然后移除该元素
+    while (!WorkStack.empty()) {
+        // MachineBasicBlock *SourceBB = WorkQueue.front();  // 获取队列中的第一个元素
+        // WorkQueue.pop();  // 然后移除该元素
+        MachineBasicBlock *SourceBB = WorkStack.top();  // 获取栈顶元素
+        WorkStack.pop();  // 然后移除该元素
 
         // 在新函数中为每个旧块创建新块
         MachineBasicBlock *NewBB = NewFunction->CreateMachineBasicBlock();
@@ -2018,13 +2142,31 @@ bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
         if (SourceBB == ExitBlock)
             continue;
 
-        // 将后继块逆序加入队列
-        for (auto Succ = SourceBB->succ_rbegin(); Succ != SourceBB->succ_rend(); ++Succ) {
-            if (!Visited.count(*Succ)) {
-                WorkQueue.push(*Succ);
-                Visited.insert(*Succ);
-            }
-        }
+        // // 将后继块逆序加入队列
+        // for (auto Succ = SourceBB->succ_rbegin(); Succ != SourceBB->succ_rend(); ++Succ) {
+        //     if (!Visited.count(*Succ)) {
+        //         WorkQueue.push(*Succ);
+        //         Visited.insert(*Succ);
+        //     }
+        // }
+
+          // 遍历所有后继块
+          for (auto Succ = SourceBB->succ_begin(); Succ != SourceBB->succ_end(); ++Succ) {
+              // 如果不是fallThroughMBB且未访问，则加入栈
+              if (!Visited.count(*Succ) && !FallThroughed.contains(*Succ)) {
+                  WorkStack.push(*Succ);
+                  Visited.insert(*Succ);
+              }
+          }
+
+          // 最后入栈处理fallthrough块
+          // 保证fallthrough块都在当前块后
+          MachineBasicBlock *fallThroughMBB = SourceBB->getFallThrough();
+          // 如果存在fallThroughMBB，最后处理它
+          if (fallThroughMBB && !Visited.count(fallThroughMBB)) {
+              WorkStack.push(fallThroughMBB);
+              Visited.insert(fallThroughMBB);
+          }     
     }
 
   // 重新建立新块之间的控制流
@@ -2081,7 +2223,7 @@ bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
   // Compute live-in set for outlined fn
   const MachineRegisterInfo &MRI = NewFunction->getRegInfo();
   const TargetRegisterInfo &TRI = *MRI.getTargetRegisterInfo();
-  LivePhysRegs RegionLiveIns(TRI);
+  // LivePhysRegs RegionLiveIns(TRI);
   for (MachineBasicBlock *MBB : MinRegion->Blocks) {
     LivePhysRegs BlockLiveIns(TRI);
     
@@ -2092,13 +2234,16 @@ bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
     for (const MachineInstr &MI : reverse(*MBB))
       BlockLiveIns.stepBackward(MI);
 
-    // 合并 BlockLiveIns 到 RegionLiveIns
-    for (MCPhysReg Reg : BlockLiveIns)
-      RegionLiveIns.addReg(Reg);
+    // // 合并 BlockLiveIns 到 RegionLiveIns
+    // for (MCPhysReg Reg : BlockLiveIns)
+    //   RegionLiveIns.addReg(Reg);
+
+    // 将 BlockLiveIns 添加到相应的 块
+    addLiveIns(*OldToNewBBMap[MBB], BlockLiveIns);
   }
 
-  // 在 outlined function 中添加 RegionLiveIns
-  addLiveIns(NewFunction->front(), RegionLiveIns);
+  // // 在 outlined function 中添加 RegionLiveIns
+  // addLiveIns(NewFunction->front(), RegionLiveIns);
 
   // lzc 用来保持调制信息的一致性
   //  // If there's a DISubprogram associated with this outlined function, then
@@ -3346,6 +3491,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   //MRAM->Mapper = Mapper;
     if (NeedMerge)
       MRAM->mergeCandidateList();
+      MRAM->printMIR();
       MRAM->eraseSourceRegion();
   MRAM->printMIR();
   llvm::outs() << getTotalInstrNums(M,MMI);
