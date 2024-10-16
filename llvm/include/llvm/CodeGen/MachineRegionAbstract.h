@@ -51,6 +51,8 @@ struct LzcRegion {
   unsigned StartInstIndex = 0; //第一条指令在指令序列中的起始位置
   unsigned EndInstIndex = 0;
 
+  unsigned RegionHashId = 0;
+
   std::vector<MachineBasicBlock *> Blocks;
   // DFS的Blocks
   LzcRegion(MachineRegion *SourceRegion);
@@ -62,6 +64,8 @@ struct LzcRegion {
 
   void updateEntry(MachineBasicBlock *NewEntry);
   void updateExit(MachineBasicBlock *NewExit);
+  void updateHashId() {RegionHashId = getHashId(); }
+  unsigned getHashId();
 
   /// Check if a Region is the TopLevel region.
   ///

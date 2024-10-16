@@ -212,6 +212,23 @@ LzcRegion::LzcRegion(std::vector<MachineBasicBlock *> &ContainedBBs) {
       FollowBB.push_back(SuccBB);
     }
   }
+
+  // 计算最小区域的指令序列是否相同
+  RegionHashId = getHashId();
+}
+
+unsigned LzcRegion::getHashId() {
+    uint64_t combinedHash = 0;
+
+    for (auto *MBB : Blocks) {
+        for (auto &MI : *MBB) {
+            // 假设 getInstrHash 是你自己实现的用于计算单条指令的哈希值
+            uint64_t instrHash = MachineInstrExpressionSimilarTrait::getHashValue(&MI);
+            combinedHash ^= (instrHash + 0x9e3779b9 + (combinedHash << 6) + (combinedHash >> 2));
+        }
+    }
+
+    return combinedHash;
 }
 
 
@@ -946,6 +963,12 @@ void MachineRegionAbstractManager::analysisRegionGroup(MRARegionGroup *Group,
   if (Group->size() < 2)
     return;
 
+  // 计算group中每个元素的id，判断最小区域的指令序列是否相同
+  for (MachineRepeatedItemInRegion *Candidate : *Group) {
+    LzcRegion *MinRegion = Candidate->MinRegion;
+    MinRegion->updateHashId();
+  }
+
   for (auto Pair : *FuncItemMap) {
     if (Pair.second->size() > 1) {
       if (Debug)
@@ -994,6 +1017,7 @@ bool MachineRegionAbstractManager::eraseSourceRegion() {
       for (MachineBasicBlock *MBB : BlocksToErase) {
         //每删一个块，检查一次
         MachineFunction *MF = MBB->getParent();
+              MF->RenumberBlocks(); // lzc,删除块后重新分配序号？
         if (!MF->verify())
         {
           return false;
@@ -1147,28 +1171,35 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
       auto CallInst = TII.insertRACall(M, *replaceMBB, InsertIt, *MF);  
 
       // 处理原区域替换后的控制流关系
-      MachineBasicBlock *predMBB = *FirstMBB->pred_begin();
-      assert((predMBB && MRABlocks.count(predMBB) == 0) && "predMBB should not be null!");
-      //对于A->B，跳转情况，需要修改跳转指令的目标块
-      // 采用shw regionabstract方法，遍历每一条指令，将目标块修改
-      for (MachineInstr &MI : *predMBB) {
-          // 遍历每条指令的每个操作数
-          for (unsigned i = 0; i < MI.getNumOperands(); ++i) {
-              MachineOperand &MO = MI.getOperand(i);
-              // 检查是否为基本块操作数
-              if (MO.isMBB() && MO.getMBB() == FirstMBB) {
-                  // 替换为 replaceMBB
-                  MO.setMBB(replaceMBB);
-                  
-                  // 打印日志确认替换成功
-                  MI.dump();
+      std::vector<MachineBasicBlock*> predecessors;// 因为要做修改删除，所以先添加到另一个容器中
+      for (MachineBasicBlock *predMBB : FirstMBB->predecessors()) {
+          predecessors.push_back(predMBB);
+      }
+
+      for (MachineBasicBlock *predMBB : predecessors) {
+          assert((predMBB && MRABlocks.count(predMBB) == 0) && "predMBB should not be null!");
+          //对于A->B，跳转情况，需要修改跳转指令的目标块
+          // 采用shw regionabstract方法，遍历每一条指令，将目标块修改
+          for (MachineInstr &MI : *predMBB) {
+              // 遍历每条指令的每个操作数
+              for (unsigned i = 0; i < MI.getNumOperands(); ++i) {
+                  MachineOperand &MO = MI.getOperand(i);
+                  // 检查是否为基本块操作数
+                  if (MO.isMBB() && MO.getMBB() == FirstMBB) {
+                      // 替换为 replaceMBB
+                      MO.setMBB(replaceMBB);                      
+                      // 打印日志确认替换成功
+                      MI.dump();
+                  }
               }
           }
+          
+          //对于fallthrough情况，无需额外处理
+          predMBB->removeSuccessor(FirstMBB);
+          predMBB->addSuccessor(replaceMBB);
       }
+      // MachineBasicBlock *predMBB = *FirstMBB->pred_begin();
       
-      //对于fallthrough情况，无需额外处理
-      predMBB->removeSuccessor(FirstMBB);
-      predMBB->addSuccessor(replaceMBB);
 
       MachineBasicBlock *OutSucc = nullptr;
       for (MachineBasicBlock *Succ : LastMBB->successors()) {
@@ -1381,12 +1412,29 @@ bool MachineRepeatedItemInRegion::splitRepeatedSubstring(
   return true;
 }
 
+// 区域指令序列相同性检验
+bool isRegionSame(MRARegionGroup *Group) {
+  unsigned referenceHashId = Group->front()->MinRegion->RegionHashId;
+
+  // 遍历所有区域，比较哈希值
+  for (MachineRepeatedItemInRegion *Candidate : *Group) {
+    LzcRegion *MinRegion = Candidate->MinRegion;
+    if (MinRegion->RegionHashId != referenceHashId) {
+      return false; // 如果有不同的哈希值，返回 false
+    }
+  }
+  return true;
+}
+
+
 bool MachineRegionAbstractManager::mergeRegionGroup(MRARegionGroup *Group,
                                               MachineRegionMergeInfo &MRMI) {
   // return false if no need to merge
   if (Group->size() < 2) {
     return false;
   }
+
+  if (!isRegionSame(Group)) return false;
 
   // lzc，todo，进行填充时再完成
   // 暂时忽略进一步的切割，splitRegion先切割出区域。splitRepeatedSubstring在区域中进一步切割相同的块出来
