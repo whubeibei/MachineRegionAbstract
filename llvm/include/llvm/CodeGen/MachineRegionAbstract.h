@@ -266,6 +266,242 @@ struct MachineRegionMergeInfo {
   // funcs for printing statistics
 };
 
+// // template <typename Trait>
+// struct InstructionMapper {
+
+//   /// The next available integer to assign to a \p MachineInstr that
+//   /// cannot be outlined.
+//   ///
+//   /// Set to -3 for compatability with \p DenseMapInfo<unsigned>.
+//   unsigned IllegalInstrNumber = -3;
+
+//   /// The next available integer to assign to a \p MachineInstr that can
+//   /// be outlined.
+//   unsigned LegalInstrNumber = 0;
+
+//   /// Correspondence from \p MachineInstrs to unsigned integers.
+//   using MapType = DenseMap<MachineInstr *, unsigned, Trait>;
+//   MapType InstructionIntegerMap;
+
+//   /// Correspondence between \p MachineBasicBlocks and target-defined flags.
+//   DenseMap<MachineBasicBlock *, unsigned> MBBFlagsMap;
+
+//   /// The vector of unsigned integers that the module is mapped to.
+//   std::vector<unsigned> UnsignedVec;
+
+//   /// Stores the location of the instruction associated with the integer
+//   /// at index i in \p UnsignedVec for each index i.
+//   std::vector<MachineBasicBlock::iterator> InstrList;
+
+//   // Set if we added an illegal number in the previous step.
+//   // Since each illegal number is unique, we only need one of them between
+//   // each range of legal numbers. This lets us make sure we don't add more
+//   // than one illegal number per range.
+//   bool AddedIllegalLastTime = false;
+
+//   /// Maps \p *It to a legal integer.
+//   ///
+//   /// Updates \p CanOutlineWithPrevInstr, \p HaveLegalRange, \p InstrListForMBB,
+//   /// \p UnsignedVecForMBB, \p InstructionIntegerMap, and \p LegalInstrNumber.
+//   ///
+//   /// \returns The integer that \p *It was mapped to.
+//   unsigned mapToLegalUnsigned(
+//       MachineBasicBlock::iterator &It, bool &CanOutlineWithPrevInstr,
+//       bool &HaveLegalRange, unsigned &NumLegalInBlock,
+//       std::vector<unsigned> &UnsignedVecForMBB,
+//       std::vector<MachineBasicBlock::iterator> &InstrListForMBB) {
+//     // We added something legal, so we should unset the AddedLegalLastTime
+//     // flag.
+//     AddedIllegalLastTime = false;
+
+//     // If we have at least two adjacent legal instructions (which may have
+//     // invisible instructions in between), remember that.
+//     if (CanOutlineWithPrevInstr)
+//       HaveLegalRange = true;
+//     CanOutlineWithPrevInstr = true;
+
+//     // Keep track of the number of legal instructions we insert.
+//     NumLegalInBlock++;
+
+//     // Get the integer for this instruction or give it the current
+//     // LegalInstrNumber.
+//     InstrListForMBB.push_back(It);
+//     MachineInstr &MI = *It;
+//     bool WasInserted;
+//     // DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarTrait>::iterator
+//     //     ResultIt;
+//     // 通用的映射逻辑
+//     typename MapType::iterator ResultIt;
+//     std::tie(ResultIt, WasInserted) =
+//         InstructionIntegerMap.insert(std::make_pair(&MI, LegalInstrNumber));
+//     unsigned MINumber = ResultIt->second;
+
+//     // There was an insertion.
+//     if (WasInserted)
+//       LegalInstrNumber++;
+
+//     UnsignedVecForMBB.push_back(MINumber);
+
+//     // Make sure we don't overflow or use any integers reserved by the DenseMap.
+//     if (LegalInstrNumber >= IllegalInstrNumber)
+//       report_fatal_error("Instruction mapping overflow!");
+
+//     assert(LegalInstrNumber != DenseMapInfo<unsigned>::getEmptyKey() &&
+//            "Tried to assign DenseMap tombstone or empty key to instruction.");
+//     assert(LegalInstrNumber != DenseMapInfo<unsigned>::getTombstoneKey() &&
+//            "Tried to assign DenseMap tombstone or empty key to instruction.");
+
+//     if (MI.isBranch())
+//     {
+//       JumpOpds.insert(MINumber); //记录跳转指令
+//     }
+    
+
+//     return MINumber;
+//   }
+
+//   /// Maps \p *It to an illegal integer.
+//   ///
+//   /// Updates \p InstrListForMBB, \p UnsignedVecForMBB, and \p
+//   /// IllegalInstrNumber.
+//   ///
+//   /// \returns The integer that \p *It was mapped to.
+//   unsigned mapToIllegalUnsigned(
+//       MachineBasicBlock::iterator &It, bool &CanOutlineWithPrevInstr,
+//       std::vector<unsigned> &UnsignedVecForMBB,
+//       std::vector<MachineBasicBlock::iterator> &InstrListForMBB) {
+//     // Can't outline an illegal instruction. Set the flag.
+//     CanOutlineWithPrevInstr = false;
+
+//     // Only add one illegal number per range of legal numbers.
+//     if (AddedIllegalLastTime)
+//       return IllegalInstrNumber;
+
+//     // Remember that we added an illegal number last time.
+//     AddedIllegalLastTime = true;
+//     unsigned MINumber = IllegalInstrNumber;
+
+//     InstrListForMBB.push_back(It);
+//     UnsignedVecForMBB.push_back(IllegalInstrNumber);
+//     IllegalInstrNumber--;
+
+//     assert(LegalInstrNumber < IllegalInstrNumber &&
+//            "Instruction mapping overflow!");
+
+//     assert(IllegalInstrNumber != DenseMapInfo<unsigned>::getEmptyKey() &&
+//            "IllegalInstrNumber cannot be DenseMap tombstone or empty key!");
+
+//     assert(IllegalInstrNumber != DenseMapInfo<unsigned>::getTombstoneKey() &&
+//            "IllegalInstrNumber cannot be DenseMap tombstone or empty key!");
+
+//     return MINumber;
+//   }
+
+//   /// Transforms a \p MachineBasicBlock into a \p vector of \p unsigneds
+//   /// and appends it to \p UnsignedVec and \p InstrList.
+//   ///
+//   /// Two instructions are assigned the same integer if they are identical.
+//   /// If an instruction is deemed unsafe to outline, then it will be assigned an
+//   /// unique integer. The resulting mapping is placed into a suffix tree and
+//   /// queried for candidates.
+//   ///
+//   /// \param MBB The \p MachineBasicBlock to be translated into integers.
+//   /// \param TII \p TargetInstrInfo for the function.
+//   void convertToUnsignedVec(MachineBasicBlock &MBB,
+//                             const TargetInstrInfo &TII) {
+//     unsigned Flags = 0;
+
+//     // Don't even map in this case.
+//     if (!TII.isMBBSafeToOutlineFrom(MBB, Flags))
+//       return;
+
+//     // Store info for the MBB for later outlining.
+//     MBBFlagsMap[&MBB] = Flags;
+
+//     MachineBasicBlock::iterator It = MBB.begin();
+
+//     // The number of instructions in this block that will be considered for
+//     // outlining.
+//     unsigned NumLegalInBlock = 0;
+
+//     // True if we have at least two legal instructions which aren't separated
+//     // by an illegal instruction.
+//     bool HaveLegalRange = false;
+
+//     // True if we can perform outlining given the last mapped (non-invisible)
+//     // instruction. This lets us know if we have a legal range.
+//     bool CanOutlineWithPrevInstr = false;
+
+//     // FIXME: Should this all just be handled in the target, rather than using
+//     // repeated calls to getOutliningType?
+//     std::vector<unsigned> UnsignedVecForMBB;
+//     std::vector<MachineBasicBlock::iterator> InstrListForMBB;
+
+//     unsigned MINumber;
+//     raw_ostream &OS = dbgs();
+
+//     OS << MBB.getFullName() << "\n";
+
+//     for (MachineBasicBlock::iterator Et = MBB.end(); It != Et; ++It) {
+//       // Keep track of where this instruction is in the module.
+//       switch (TII.getRAType(It, Flags)) {
+//       case InstrType::Illegal:
+//         mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
+//                              InstrListForMBB);
+//         break;
+
+//       case InstrType::Legal:
+//         MINumber = mapToLegalUnsigned(It, CanOutlineWithPrevInstr, HaveLegalRange,
+//                            NumLegalInBlock, UnsignedVecForMBB, InstrListForMBB);
+//         // if (Debug)
+//         // {
+//           // OS << "   " << MINumber << "   ";
+//           // It->dump();
+//         // }
+//         break;
+
+//       case InstrType::LegalTerminator:
+//         mapToLegalUnsigned(It, CanOutlineWithPrevInstr, HaveLegalRange,
+//                            NumLegalInBlock, UnsignedVecForMBB, InstrListForMBB);
+//         // The instruction also acts as a terminator, so we have to record that
+//         // in the string.
+//         mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
+//                              InstrListForMBB);
+//         break;
+
+//       case InstrType::Invisible:
+//         // Normally this is set by mapTo(Blah)Unsigned, but we just want to
+//         // skip this instruction. So, unset the flag here.
+//         AddedIllegalLastTime = false;
+//         break;
+//       }
+//     }
+
+//     // Are there enough legal instructions in the block for outlining to be
+//     // possible?
+//     if (HaveLegalRange) {
+//       // After we're done every insertion, uniquely terminate this part of the
+//       // "string". This makes sure we won't match across basic block or function
+//       // boundaries since the "end" is encoded uniquely and thus appears in no
+//       // repeated substring.
+//       //lzc,修改
+//       // mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
+//       //                      InstrListForMBB);
+//       llvm::append_range(InstrList, InstrListForMBB);
+//       llvm::append_range(UnsignedVec, UnsignedVecForMBB);
+//     }
+//   }
+
+//   InstructionMapper() {
+//     // Make sure that the implementation of DenseMapInfo<unsigned> hasn't
+//     // changed.
+//     assert(DenseMapInfo<unsigned>::getEmptyKey() == (unsigned)-1 &&
+//            "DenseMapInfo<unsigned>'s empty key isn't -1!");
+//     assert(DenseMapInfo<unsigned>::getTombstoneKey() == (unsigned)-2 &&
+//            "DenseMapInfo<unsigned>'s tombstone key isn't -2!");
+//   }
+// };
+
 struct InstructionMapper {
 
   /// The next available integer to assign to a \p MachineInstr that
@@ -278,9 +514,16 @@ struct InstructionMapper {
   /// be outlined.
   unsigned LegalInstrNumber = 0;
 
+  // 
+  bool isRegisterNameIgnored = 0;
+
   /// Correspondence from \p MachineInstrs to unsigned integers.
   DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarTrait>
       InstructionIntegerMap;
+
+  /// Correspondence from \p MachineInstrs to unsigned integers.
+  DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarIgnoringRegisterNameTrait>
+      InstructionIntegerIgnoringRegisterNameMap;
 
   /// Correspondence between \p MachineBasicBlocks and target-defined flags.
   DenseMap<MachineBasicBlock *, unsigned> MBBFlagsMap;
@@ -327,12 +570,22 @@ struct InstructionMapper {
     InstrListForMBB.push_back(It);
     MachineInstr &MI = *It;
     bool WasInserted;
-    DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarTrait>::iterator
-        ResultIt;
-    std::tie(ResultIt, WasInserted) =
-        InstructionIntegerMap.insert(std::make_pair(&MI, LegalInstrNumber));
-    unsigned MINumber = ResultIt->second;
-
+    unsigned MINumber;
+    if (isRegisterNameIgnored) {
+        DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarIgnoringRegisterNameTrait>::iterator
+            ResultIt;
+        std::tie(ResultIt, WasInserted) =
+            InstructionIntegerIgnoringRegisterNameMap.insert(std::make_pair(&MI, LegalInstrNumber));
+        MINumber = ResultIt->second;
+    } else
+    {    
+      DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarTrait>::iterator
+            ResultIt;
+        std::tie(ResultIt, WasInserted) =
+            InstructionIntegerMap.insert(std::make_pair(&MI, LegalInstrNumber));
+        MINumber = ResultIt->second;
+    }
+    
     // There was an insertion.
     if (WasInserted)
       LegalInstrNumber++;
@@ -452,8 +705,8 @@ struct InstructionMapper {
                            NumLegalInBlock, UnsignedVecForMBB, InstrListForMBB);
         // if (Debug)
         // {
-          OS << "   " << MINumber << "   ";
-          It->dump();
+          // OS << "   " << MINumber << "   ";
+          // It->dump();
         // }
         break;
 
@@ -497,7 +750,253 @@ struct InstructionMapper {
     assert(DenseMapInfo<unsigned>::getTombstoneKey() == (unsigned)-2 &&
            "DenseMapInfo<unsigned>'s tombstone key isn't -2!");
   }
+
+  InstructionMapper(bool IgnoringRN) {
+    // Make sure that the implementation of DenseMapInfo<unsigned> hasn't
+    // changed.
+    isRegisterNameIgnored = IgnoringRN;
+    assert(DenseMapInfo<unsigned>::getEmptyKey() == (unsigned)-1 &&
+           "DenseMapInfo<unsigned>'s empty key isn't -1!");
+    assert(DenseMapInfo<unsigned>::getTombstoneKey() == (unsigned)-2 &&
+           "DenseMapInfo<unsigned>'s tombstone key isn't -2!");
+  }
 };
+
+
+// // 新mapper，用于进行寄存器重命名映射
+// struct InstructionIgnoringRegisterNameMapper {
+
+//   /// The next available integer to assign to a \p MachineInstr that
+//   /// cannot be outlined.
+//   ///
+//   /// Set to -3 for compatability with \p DenseMapInfo<unsigned>.
+//   unsigned IllegalInstrNumber = -3;
+
+//   /// The next available integer to assign to a \p MachineInstr that can
+//   /// be outlined.
+//   unsigned LegalInstrNumber = 0;
+
+//   /// Correspondence from \p MachineInstrs to unsigned integers.
+//   DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarIgnoringRegisterNameTrait>
+//       InstructionIntegerMap;
+
+//   /// Correspondence between \p MachineBasicBlocks and target-defined flags.
+//   DenseMap<MachineBasicBlock *, unsigned> MBBFlagsMap;
+
+//   /// The vector of unsigned integers that the module is mapped to.
+//   std::vector<unsigned> UnsignedVec;
+
+//   /// Stores the location of the instruction associated with the integer
+//   /// at index i in \p UnsignedVec for each index i.
+//   std::vector<MachineBasicBlock::iterator> InstrList;
+
+//   // Set if we added an illegal number in the previous step.
+//   // Since each illegal number is unique, we only need one of them between
+//   // each range of legal numbers. This lets us make sure we don't add more
+//   // than one illegal number per range.
+//   bool AddedIllegalLastTime = false;
+
+//   /// Maps \p *It to a legal integer.
+//   ///
+//   /// Updates \p CanOutlineWithPrevInstr, \p HaveLegalRange, \p InstrListForMBB,
+//   /// \p UnsignedVecForMBB, \p InstructionIntegerMap, and \p LegalInstrNumber.
+//   ///
+//   /// \returns The integer that \p *It was mapped to.
+//   unsigned mapToLegalUnsigned(
+//       MachineBasicBlock::iterator &It, bool &CanOutlineWithPrevInstr,
+//       bool &HaveLegalRange, unsigned &NumLegalInBlock,
+//       std::vector<unsigned> &UnsignedVecForMBB,
+//       std::vector<MachineBasicBlock::iterator> &InstrListForMBB) {
+//     // We added something legal, so we should unset the AddedLegalLastTime
+//     // flag.
+//     AddedIllegalLastTime = false;
+
+//     // If we have at least two adjacent legal instructions (which may have
+//     // invisible instructions in between), remember that.
+//     if (CanOutlineWithPrevInstr)
+//       HaveLegalRange = true;
+//     CanOutlineWithPrevInstr = true;
+
+//     // Keep track of the number of legal instructions we insert.
+//     NumLegalInBlock++;
+
+//     // Get the integer for this instruction or give it the current
+//     // LegalInstrNumber.
+//     InstrListForMBB.push_back(It);
+//     MachineInstr &MI = *It;
+//     bool WasInserted;
+//     DenseMap<MachineInstr *, unsigned, MachineInstrExpressionSimilarIgnoringRegisterNameTrait>::iterator
+//         ResultIt;
+//     std::tie(ResultIt, WasInserted) =
+//         InstructionIntegerMap.insert(std::make_pair(&MI, LegalInstrNumber));
+//     unsigned MINumber = ResultIt->second;
+
+//     // There was an insertion.
+//     if (WasInserted)
+//       LegalInstrNumber++;
+
+//     UnsignedVecForMBB.push_back(MINumber);
+
+//     // Make sure we don't overflow or use any integers reserved by the DenseMap.
+//     if (LegalInstrNumber >= IllegalInstrNumber)
+//       report_fatal_error("Instruction mapping overflow!");
+
+//     assert(LegalInstrNumber != DenseMapInfo<unsigned>::getEmptyKey() &&
+//            "Tried to assign DenseMap tombstone or empty key to instruction.");
+//     assert(LegalInstrNumber != DenseMapInfo<unsigned>::getTombstoneKey() &&
+//            "Tried to assign DenseMap tombstone or empty key to instruction.");
+
+//     if (MI.isBranch())
+//     {
+//       JumpOpds.insert(MINumber); //记录跳转指令
+//     }
+    
+
+//     return MINumber;
+//   }
+
+//   /// Maps \p *It to an illegal integer.
+//   ///
+//   /// Updates \p InstrListForMBB, \p UnsignedVecForMBB, and \p
+//   /// IllegalInstrNumber.
+//   ///
+//   /// \returns The integer that \p *It was mapped to.
+//   unsigned mapToIllegalUnsigned(
+//       MachineBasicBlock::iterator &It, bool &CanOutlineWithPrevInstr,
+//       std::vector<unsigned> &UnsignedVecForMBB,
+//       std::vector<MachineBasicBlock::iterator> &InstrListForMBB) {
+//     // Can't outline an illegal instruction. Set the flag.
+//     CanOutlineWithPrevInstr = false;
+
+//     // Only add one illegal number per range of legal numbers.
+//     if (AddedIllegalLastTime)
+//       return IllegalInstrNumber;
+
+//     // Remember that we added an illegal number last time.
+//     AddedIllegalLastTime = true;
+//     unsigned MINumber = IllegalInstrNumber;
+
+//     InstrListForMBB.push_back(It);
+//     UnsignedVecForMBB.push_back(IllegalInstrNumber);
+//     IllegalInstrNumber--;
+
+//     assert(LegalInstrNumber < IllegalInstrNumber &&
+//            "Instruction mapping overflow!");
+
+//     assert(IllegalInstrNumber != DenseMapInfo<unsigned>::getEmptyKey() &&
+//            "IllegalInstrNumber cannot be DenseMap tombstone or empty key!");
+
+//     assert(IllegalInstrNumber != DenseMapInfo<unsigned>::getTombstoneKey() &&
+//            "IllegalInstrNumber cannot be DenseMap tombstone or empty key!");
+
+//     return MINumber;
+//   }
+
+//   /// Transforms a \p MachineBasicBlock into a \p vector of \p unsigneds
+//   /// and appends it to \p UnsignedVec and \p InstrList.
+//   ///
+//   /// Two instructions are assigned the same integer if they are identical.
+//   /// If an instruction is deemed unsafe to outline, then it will be assigned an
+//   /// unique integer. The resulting mapping is placed into a suffix tree and
+//   /// queried for candidates.
+//   ///
+//   /// \param MBB The \p MachineBasicBlock to be translated into integers.
+//   /// \param TII \p TargetInstrInfo for the function.
+//   void convertToUnsignedVec(MachineBasicBlock &MBB,
+//                             const TargetInstrInfo &TII) {
+//     unsigned Flags = 0;
+
+//     // Don't even map in this case.
+//     if (!TII.isMBBSafeToOutlineFrom(MBB, Flags))
+//       return;
+
+//     // Store info for the MBB for later outlining.
+//     MBBFlagsMap[&MBB] = Flags;
+
+//     MachineBasicBlock::iterator It = MBB.begin();
+
+//     // The number of instructions in this block that will be considered for
+//     // outlining.
+//     unsigned NumLegalInBlock = 0;
+
+//     // True if we have at least two legal instructions which aren't separated
+//     // by an illegal instruction.
+//     bool HaveLegalRange = false;
+
+//     // True if we can perform outlining given the last mapped (non-invisible)
+//     // instruction. This lets us know if we have a legal range.
+//     bool CanOutlineWithPrevInstr = false;
+
+//     // FIXME: Should this all just be handled in the target, rather than using
+//     // repeated calls to getOutliningType?
+//     std::vector<unsigned> UnsignedVecForMBB;
+//     std::vector<MachineBasicBlock::iterator> InstrListForMBB;
+
+//     unsigned MINumber;
+//     raw_ostream &OS = dbgs();
+
+//     OS << MBB.getFullName() << "\n";
+
+//     for (MachineBasicBlock::iterator Et = MBB.end(); It != Et; ++It) {
+//       // Keep track of where this instruction is in the module.
+//       switch (TII.getRAType(It, Flags)) {
+//       case InstrType::Illegal:
+//         mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
+//                              InstrListForMBB);
+//         break;
+
+//       case InstrType::Legal:
+//         MINumber = mapToLegalUnsigned(It, CanOutlineWithPrevInstr, HaveLegalRange,
+//                            NumLegalInBlock, UnsignedVecForMBB, InstrListForMBB);
+//         // if (Debug)
+//         // {
+//           // OS << "   " << MINumber << "   ";
+//           // It->dump();
+//         // }
+//         break;
+
+//       case InstrType::LegalTerminator:
+//         mapToLegalUnsigned(It, CanOutlineWithPrevInstr, HaveLegalRange,
+//                            NumLegalInBlock, UnsignedVecForMBB, InstrListForMBB);
+//         // The instruction also acts as a terminator, so we have to record that
+//         // in the string.
+//         mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
+//                              InstrListForMBB);
+//         break;
+
+//       case InstrType::Invisible:
+//         // Normally this is set by mapTo(Blah)Unsigned, but we just want to
+//         // skip this instruction. So, unset the flag here.
+//         AddedIllegalLastTime = false;
+//         break;
+//       }
+//     }
+
+//     // Are there enough legal instructions in the block for outlining to be
+//     // possible?
+//     if (HaveLegalRange) {
+//       // After we're done every insertion, uniquely terminate this part of the
+//       // "string". This makes sure we won't match across basic block or function
+//       // boundaries since the "end" is encoded uniquely and thus appears in no
+//       // repeated substring.
+//       //lzc,修改
+//       // mapToIllegalUnsigned(It, CanOutlineWithPrevInstr, UnsignedVecForMBB,
+//       //                      InstrListForMBB);
+//       llvm::append_range(InstrList, InstrListForMBB);
+//       llvm::append_range(UnsignedVec, UnsignedVecForMBB);
+//     }
+//   }
+
+//   InstructionIgnoringRegisterNameMapper() {
+//     // Make sure that the implementation of DenseMapInfo<unsigned> hasn't
+//     // changed.
+//     assert(DenseMapInfo<unsigned>::getEmptyKey() == (unsigned)-1 &&
+//            "DenseMapInfo<unsigned>'s empty key isn't -1!");
+//     assert(DenseMapInfo<unsigned>::getTombstoneKey() == (unsigned)-2 &&
+//            "DenseMapInfo<unsigned>'s tombstone key isn't -2!");
+//   }
+// };
+
 
 // MIR层区域抽象的总控程序
 struct MachineRegionAbstract : public ModulePass
@@ -545,8 +1044,11 @@ struct MachineRegionAbstract : public ModulePass
   
     /// Populate and \p InstructionMapper with instruction-to-integer mappings.
   /// These are used to construct a suffix tree.
+  // void populateMapper(InstructionMapper &Mapper, Module &M,
+  //                     MachineModuleInfo &MMI);
   void populateMapper(InstructionMapper &Mapper, Module &M,
                       MachineModuleInfo &MMI);
+
 
 };
 

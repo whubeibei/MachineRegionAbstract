@@ -91,6 +91,11 @@ static cl::opt<bool> RAAbstractInBlockCandidate(
     "region-abstract-in-block-candidate", cl::init(true), cl::Hidden,
     cl::desc("Whether abstract in-block-candidate."));
 
+// register rename
+static cl::opt<bool> MRARegisterRename(
+    "machine-region-abstract-register-rename", cl::init(false), cl::Hidden,
+    cl::desc("Whether use register rename."));
+
 static cl::opt<bool>
     RAGetAndMerge("region-abstract-get-merge", cl::init(true), cl::Hidden,
                   cl::desc("Merge immediately after geting candidate."));
@@ -765,7 +770,15 @@ bool MachineRepeatedItemInRegion::splitRegion(
     break;
   default:
   case 0:
-    StartInst = &*MinRegion->EntryBlock->getFirstTerminator();
+    // 获取终止指令
+    auto FirstTerminator = MinRegion->EntryBlock->getFirstTerminator();
+
+    // 检查是否找到有效的终止指令
+    if (FirstTerminator == MinRegion->EntryBlock->end()) {
+        llvm::errs() << "Error: No terminator in EntryBlock\n";
+        return false;
+    }
+    StartInst = &*FirstTerminator;
     break;
   }
   if (StartInst) {
@@ -1662,7 +1675,8 @@ void MachineRegionAbstract::populateMapper(InstructionMapper &Mapper, Module &M,
   //先定义好function分隔符的下限，凡是对应值大于此下限的都是函数分隔符；
   unsigned FuncDelimiterNumber = UINT_MAX - 3;
   //unsigned FuncDelimiterLowerLimit = FuncDelimiterNumber - FunctionsToProcess.size();
-  unsigned FunctionsToProcessNum = 1000;//暂定为1000
+  //todo,修改为更合理的值
+  unsigned FunctionsToProcessNum = 10000;//暂定为10000,lzc,todo
   unsigned FuncDelimiterLowerLimit = FuncDelimiterNumber - FunctionsToProcessNum;
   // NormalUpperLimit是因为还有DFS造成的分隔符，数目无法确定
   unsigned NormalUpperLimit = FuncDelimiterLowerLimit;
@@ -3453,7 +3467,14 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   //printMIR(dbgs(),M);
   printCustomMIR(M,MMI);
 
-  InstructionMapper Mapper;
+  // if (MRARegisterRename.getValue()) {
+  //   InstructionMapper<MachineInstrExpressionSimilarIgnoringRegisterNameTrait> Mapper;
+  // } else {
+  //   InstructionMapper<MachineInstrExpressionSimilarTrait> Mapper;
+  // }
+
+  InstructionMapper Mapper(MRARegisterRename.getValue());
+
   // Prepare instruction mappings for the suffix tree.
   populateMapper(Mapper, M, MMI);
 
@@ -3477,7 +3498,15 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
     //testElimateInterOverlap(NewRSList, StrMap);
   }
 
-  // 加入对冗余尾指令为跳转的剔除
+  unsigned NewTotalBenefit = 0;
+  std::for_each(NewRSList.begin(), NewRSList.end(),
+                [&NewTotalBenefit](RepeatedInfos::RepeatedSubstringByS *RS) {
+                  NewTotalBenefit += RS->getPredictBenefit(CreateFuncOverHead);
+                });
+
+  // lzc,todo,可以更为精细？延迟到后续阶段剔除
+  // 加入对冗余尾指令为跳转的剔除（后缀树层面）
+  // 会影响评估收益，是否影响实际收益？
   RepeatedInfos::eliminateJumpEndStr(JumpOpds,NewRSList,Mapper.UnsignedVec);
 
     // #ifdef ANALYSIS_TREE_DEBUG
@@ -3485,7 +3514,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   unsigned TotalBenefit =
       RepeatedInfos::analysisOld(ST, RepeatedLowerLimit, CreateFuncOverHead);
 
-  unsigned NewTotalBenefit = 0;
+  //unsigned NewTotalBenefit = 0;
   std::for_each(NewRSList.begin(), NewRSList.end(),
                 [&NewTotalBenefit](RepeatedInfos::RepeatedSubstringByS *RS) {
                   NewTotalBenefit += RS->getPredictBenefit(CreateFuncOverHead);

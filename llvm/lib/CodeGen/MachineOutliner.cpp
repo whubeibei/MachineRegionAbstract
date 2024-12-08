@@ -953,9 +953,10 @@ void MachineOutliner::emitInstrCountChangedRemark(
 
     // Did we have a previously-recorded size? If yes, then set FnCountBefore
     // to that.
-    if (It != FunctionToInstrCount.end())
+    if (It != FunctionToInstrCount.end()){
       FnCountBefore = It->second;
       TotoalFnCountBefore += FnCountBefore;
+    }
 
     // Compute the delta and emit a remark if there was a change.
     int64_t FnDelta = static_cast<int64_t>(FnCountAfter) -

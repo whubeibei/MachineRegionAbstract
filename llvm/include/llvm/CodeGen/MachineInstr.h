@@ -1164,6 +1164,12 @@ public:
   bool isSimilarTo(const MachineInstr &Other,
                      MICheckType Check = CheckDefs) const;
 
+  //新增指令相似判断(忽略寄存器名称)
+  //用于判断两条指令是否相似（用于MachineRegionabstract）
+  //todo,将hash映射单独提取出来
+  bool isSimilarIgnoringRegisterNameTo(const MachineInstr &Other,
+                     MICheckType Check = CheckDefs) const;
+
   /// Unlink 'this' from the containing basic block, and return it without
   /// deleting it.
   ///
@@ -1949,6 +1955,30 @@ struct MachineInstrExpressionSimilarTrait : DenseMapInfo<MachineInstr*> {
         LHS == getEmptyKey() || LHS == getTombstoneKey())
       return LHS == RHS;
     return LHS->isSimilarTo(*RHS, MachineInstr::IgnoreVRegDefs);
+  }
+};
+
+//  lzc
+/// Special DenseMapInfo traits to compare MachineInstr* by *value* of the
+/// instruction rather than by pointer value.
+/// for MachineRegionAbstract
+struct MachineInstrExpressionSimilarIgnoringRegisterNameTrait : DenseMapInfo<MachineInstr*> {
+  static inline MachineInstr *getEmptyKey() {
+    return nullptr;
+  }
+
+  static inline MachineInstr *getTombstoneKey() {
+    return reinterpret_cast<MachineInstr*>(-1);
+  }
+
+  static unsigned getHashValue(const MachineInstr* const &MI);
+
+  static bool isEqual(const MachineInstr* const &LHS,
+                      const MachineInstr* const &RHS) {
+    if (RHS == getEmptyKey() || RHS == getTombstoneKey() ||
+        LHS == getEmptyKey() || LHS == getTombstoneKey())
+      return LHS == RHS;
+    return LHS->isSimilarIgnoringRegisterNameTo(*RHS, MachineInstr::IgnoreVRegDefs);
   }
 };
 

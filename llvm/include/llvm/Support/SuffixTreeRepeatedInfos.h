@@ -53,6 +53,7 @@ public:
     // overlapping, can we get the suitable result
     unsigned getPredictBenefit(unsigned CreateFuncOverHead) const;
     void print(const llvm::ArrayRef<unsigned> &Str);
+    double getPredictPriority(unsigned CreateFuncOverHead) const;
   };
 
   // std::set<RepeatedSubstringByS> RSSet;
@@ -83,8 +84,10 @@ public:
     llvm::stable_sort(RSList, [&CreateFunctionOverhead](
                                   RepeatedInfos::RepeatedSubstringByS *LHS,
                                   RepeatedInfos::RepeatedSubstringByS *RHS) {
-      return LHS->getPredictBenefit(CreateFunctionOverhead) >
-             RHS->getPredictBenefit(CreateFunctionOverhead);
+      // return LHS->getPredictBenefit(CreateFunctionOverhead) >
+      //        RHS->getPredictBenefit(CreateFunctionOverhead);
+            return LHS->getPredictPriority(CreateFunctionOverhead) >
+             RHS->getPredictPriority(CreateFunctionOverhead);
     });
 
     // iterate the list and remove all inter-overlap

@@ -33,6 +33,22 @@ unsigned RepeatedInfos::RepeatedSubstringByS::getPredictBenefit(
   return Original - Abstract;
 }
 
+double RepeatedInfos::RepeatedSubstringByS::getPredictPriority(
+    unsigned CreateFuncOverHead) const {
+  if (StartIndices.empty() || StartIndices.size() < 2 || Length < 2) {
+    return 1;
+  }
+  // Original:  Length*StartIndices.size()
+  unsigned Original = Length * StartIndices.size();
+  // Abstract:  Length+1+StartIndices.size()+CreateFuncOverHead;
+  unsigned Abstract = Length + 1 + StartIndices.size() + CreateFuncOverHead;
+
+  // if (Original <= Abstract)
+  //   return 0;
+  // Benefit: Original - Abstract
+  return Original / Abstract;
+}
+
 void RepeatedInfos::RepeatedSubstringByS::print(
     const llvm::ArrayRef<unsigned> &Str) {
   unsigned StringLen = Length;
