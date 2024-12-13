@@ -1011,6 +1011,20 @@ void MachineRegionAbstractManager::analysisRegionGroup(MRARegionGroup *Group,
   //getGroupParamsList(MRMI);
 }
 
+void MachineRegionAbstractManager:: preVerifyReplaceMBBControlFlow() {
+  for (MachineBasicBlock* replaceMBB : ReplacedBlockSet) {
+    const TargetSubtargetInfo &STI = replaceMBB->getParent()->getSubtarget();
+    const TargetInstrInfo &TII = *STI.getInstrInfo();
+    // 判断后继块是否紧邻替换块，保证fallthrough关系正常
+    auto NextIt = std::next(MachineFunction::iterator(replaceMBB));
+    auto OutSucc = *replaceMBB->succ_begin();
+    if (&*NextIt != OutSucc) {
+      // 如果不紧邻，在 replaceMBB 中插入跳转指令到 Succ
+      TII.insertUnconditionalBranch(*replaceMBB,OutSucc,DebugLoc());
+    }
+  }
+}
+
 bool MachineRegionAbstractManager::eraseSourceRegion() {
       // 删除整个区域的所有基本块
       for (MachineBasicBlock *MBB : BlocksToErase) {
@@ -1027,6 +1041,8 @@ bool MachineRegionAbstractManager::eraseSourceRegion() {
         //   return false;
         // }
       }
+      // 在检查之前，先预处理一下replaceMBB的控制流
+      preVerifyReplaceMBBControlFlow();
       for (MachineBasicBlock *MBB : BlocksToErase) {
         //每删一个块，检查一次
         MachineFunction *MF = MBB->getParent();
@@ -1231,7 +1247,6 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
       // TII.insertBranch(*replaceMBB, OutSucc, nullptr, {}, DL);
       // 添加后继关系
       replaceMBB->addSuccessor(OutSucc);
-
       // 广度优先,对区域自下而上分析，确定区域的livein，liveout(def,并不一定后续被使用)   
       // 队列，用于按广度优先顺序处理块
       std::queue<MachineBasicBlock*> WorkQueue;
@@ -1334,6 +1349,9 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
       for (MachineBasicBlock *MBB : MRABlocks) {
         BlocksToErase.push_back(MBB);
       }
+
+      // 将所有替换块放入集合，便于后续检查控制流
+      ReplacedBlockSet.insert(replaceMBB);
 
       // // 删除整个区域的所有基本块
       // for (MachineBasicBlock *MBB : BlocksToErase) {

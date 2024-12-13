@@ -1063,6 +1063,7 @@ public:
 
   DenseSet<MachineBasicBlock *> NonSplittableBlockSet;
   std::vector<MachineBasicBlock *> BlocksToDelete;
+  DenseSet<MachineBasicBlock *> ReplacedBlockSet; //用来替换的原区域的调用块集
   unsigned CreatedMergedFunctionNum = 0;
   unsigned NumRAed = 0;
   std::vector<MachineFunction *> CreatedMergedFuncList;
@@ -1103,6 +1104,8 @@ public:
   int getFinallBenefit(MachineRegionMergeInfo &MRMI) { return 1; }
   bool replaceCall(MRARegionGroup *Group, MachineRegionMergeInfo &MRMI);
   bool eraseSourceRegion();
+  //在删除原区域后，检验所有替换块，判断其是否正确fallthrough到后继块，若错误，则添加跳转指令来修复
+  void preVerifyReplaceMBBControlFlow();
   //TargetInstrInfo getCurrentModuleTII();
 
   //工具，用于打印变量
