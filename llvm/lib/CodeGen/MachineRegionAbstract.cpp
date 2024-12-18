@@ -1490,8 +1490,8 @@ bool MachineRegionAbstractManager::mergeRegionGroup(MRARegionGroup *Group,
   replaceCall(Group, MRMI);
   //replaceCodeWithCall(Group, MRMI);
 
-  dbgs() << "替换后";
-  printMIR();
+  // dbgs() << "替换后";
+  // printMIR();
 
   return true;
 }
@@ -3526,7 +3526,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   // lzc,todo,可以更为精细？延迟到后续阶段剔除
   // 加入对冗余尾指令为跳转的剔除（后缀树层面）
   // 会影响评估收益，是否影响实际收益？
-  RepeatedInfos::eliminateJumpEndStr(JumpOpds,NewRSList,Mapper.UnsignedVec);
+  RepeatedInfos::removeSequenceEdgeJumps(JumpOpds,NewRSList,Mapper.UnsignedVec);
 
     // #ifdef ANALYSIS_TREE_DEBUG
   // unsigned TotalBenefit = analysisOld(ST, RepeatedLowerLimit);
@@ -3589,7 +3589,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
       MRAM->mergeCandidateList();
       MRAM->printMIR();
       MRAM->eraseSourceRegion();
-  MRAM->printMIR();
+  // MRAM->printMIR();
   llvm::outs() << getTotalInstrNums(M,MMI);
   return true;
 

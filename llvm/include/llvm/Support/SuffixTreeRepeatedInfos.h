@@ -171,26 +171,56 @@ public:
     return TotalBenefit;
   }
 
-  //在后缀树层面剔除重复子串尾数为跳转指令的冗余
-  static void eliminateJumpEndStr(std::set<unsigned> JumpOpds,
-                                  std::vector<RepeatedSubstringByS *> RSList,
-                                  std::vector<unsigned> &InstrList){
-    for (RepeatedSubstringByS * RS : RSList)
-    {
-      // 分析RS，若结尾为跳转指令，则剔除最后一条指令，不将跳转视为冗余
-      unsigned endPtr = RS->StartIndices[0] + RS->Length - 1;
-      unsigned endOpd = InstrList[endPtr];
-      if (JumpOpds.count(endOpd))
-      {
-        RS->Length --; //通过减少长度来剔除末尾指令
-        unsigned IllegalInstrNumber = -3;
-        InstrList[endPtr] = IllegalInstrNumber;//同时更新了StrMap
-      }
-      
-      
+//在后缀树层面剔除冗余指令序列边界（开头结尾）的跳转指令
+static void removeSequenceEdgeJumps(std::set<unsigned> JumpOpds,
+                                      std::vector<RepeatedSubstringByS *> &RSList,
+                                      std::vector<unsigned> &InstrList) {
+    // 遍历 RSList 中的每个重复子串
+    for (auto it = RSList.begin(); it != RSList.end(); ) {
+        RepeatedSubstringByS *RS = *it;
+
+        // 处理子串的开头跳转指令
+        while (RS->Length > 0) {
+            unsigned startPtr = RS->StartIndices[0]; // 取第一条指令为示例
+            if (JumpOpds.count(InstrList[startPtr])) {
+                unsigned IllegalInstrNumber = -3;
+                // 同步更新每一条 RS
+                for (unsigned &startIndex : RS->StartIndices) {
+                    InstrList[startIndex] = IllegalInstrNumber; // 标记为非法指令
+                    startIndex++; // 同步更新所有起始位置
+                }
+                RS->Length--; // 减少子串长度
+            } else {
+                break; // 开头不再是跳转指令时退出
+            }
+        }
+
+        // 处理子串的结尾跳转指令
+        while (RS->Length > 0) {
+            unsigned endPtr = RS->StartIndices[0] + RS->Length - 1;
+            if (JumpOpds.count(InstrList[endPtr])) {
+                unsigned IllegalInstrNumber = -3;
+                // 同步更新 StrMap 中所有尾指令映射数
+                for (unsigned &startIndex : RS->StartIndices) {
+                    endPtr = startIndex + RS->Length - 1;
+                    InstrList[endPtr] = IllegalInstrNumber; // 标记为非法指令
+                }
+                RS->Length--; // 减少子串长度
+            } else {
+                break; // 结尾不再是跳转指令时退出
+            }
+        }
+
+        // 如果子串长度小于 2，则从 RSList 中移除该子串
+        if (RS->Length < 2) {
+            it = RSList.erase(it);
+        } else {
+            ++it;
+        }
     }
-    
-  }
+}
+
+
 
 private:
   // insert into RSMap if the node's string repeat, and return start indices
