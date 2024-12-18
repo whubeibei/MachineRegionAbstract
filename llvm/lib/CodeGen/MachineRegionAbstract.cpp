@@ -814,7 +814,8 @@ bool MachineRepeatedItemInRegion::splitRegion(
     MachineInstr *SplitInst = &*It;
     // 使用 splitAt 函数分割基本块，确保分界指令被包含在新创建的块中 
     // StartBB = PrevBB->splitAt(*SplitInst);
-    StartBB = splitMBB(PrevBB,SplitInst);
+    // StartBB = splitMBB(PrevBB,SplitInst);
+    StartBB = PrevBB->splitBefore(*StartInst);
     SplitedStart = true;
     AffectedFuncs.insert(PrevBB->getParent());
     MinRegion->updateEntry(StartBB);
@@ -882,16 +883,16 @@ bool MachineRepeatedItemInRegion::splitRegion(
     }
 
     std::string OriginalName = EndBB->getName().str();
-    // FollowBB = EndBB->splitBasicBlock(EndInst, OriginalName + "_post_ra");
-    // 获取 EndInst 前一条指令
-    MachineBasicBlock::iterator It = EndInst->getIterator();
-    if (It != EndBB->begin()) {//fixme，防止割空
-      --It; // 获取前一条指令
-      // llvm::dbgs() << "StartInst is the first instruction in the block.\n";
-      // return 1;
-    }
-    MachineInstr *SplitInst = &*It;
-    FollowBB = EndBB->splitAt(*SplitInst);
+    // // FollowBB = EndBB->splitBasicBlock(EndInst, OriginalName + "_post_ra");
+    // // 获取 EndInst 前一条指令
+    // MachineBasicBlock::iterator It = EndInst->getIterator();
+    // if (It != EndBB->begin()) {//fixme，防止割空
+    //   --It; // 获取前一条指令
+    //   // llvm::dbgs() << "StartInst is the first instruction in the block.\n";
+    //   // return 1;
+    // }
+    // MachineInstr *SplitInst = &*It;
+    FollowBB = EndBB->splitBefore(*EndInst);
     // FollowBB = splitMBB(EndBB,SplitInst);
     SplitedEnd = true;
     AffectedFuncs.insert(EndBB->getParent());

@@ -823,6 +823,17 @@ public:
   MachineBasicBlock *splitAt(MachineInstr &SplitInst, bool UpdateLiveIns = true,
                              LiveIntervals *LIS = nullptr);
 
+  /// Split a basic block into 2 pieces at \p SplitPoint. A new block will be
+  /// inserted after this block, and all instructions after( \p include) \p SplitInst moved
+  /// to it (\p SplitInst will be in the original block). If \p LIS is provided,
+  /// LiveIntervals will be appropriately updated. \return the newly inserted
+  /// block.
+  ///
+  /// If \p UpdateLiveIns is true, this will ensure the live ins list is
+  /// accurate, including for physreg uses/defs in the original block.
+  MachineBasicBlock *splitBefore(MachineInstr &SplitInst, bool UpdateLiveIns = true,
+                             LiveIntervals *LIS = nullptr);
+
   /// Split the critical edge from this block to the given successor block, and
   /// return the newly created block, or null if splitting is not possible.
   ///
