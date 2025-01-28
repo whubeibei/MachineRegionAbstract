@@ -1111,6 +1111,10 @@ public:
   //工具，用于打印变量
   unsigned printMIR();
 
+  // 分析一段区域（函数）的寄存器活跃性
+  // 主要是得到这段区域的livein和def，以填充调用指令
+  
+
   //void setMapper(InstructionMapper)
 };
 

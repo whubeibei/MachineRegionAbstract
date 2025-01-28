@@ -815,10 +815,25 @@ bool MachineOutliner::outline(Module &M,
                 // Since the regiester is modeled as defined,
                 // it is not necessary to be put in use register set.
                 UseRegs.erase(MOP.getReg());
+              for (const Register &I : UseRegs)
+              {
+                llvm::outs()<<I << "  ";
+              }
+              llvm::outs()<<"\n";
+                            for (const Register &I : DefRegs)
+              {
+                llvm::outs()<<I << "  ";
+              }
+              llvm::outs()<<"\n";
             } else if (!MOP.isUndef()) {
               // Any register which is not undefined should
               // be put in the use register set.
               UseRegs.insert(MOP.getReg());
+              for (const Register &I : UseRegs)
+              {
+                llvm::outs()<<I << "  ";
+              }
+              llvm::outs()<<"\n";
             }
           }
           if (MI->isCandidateForCallSiteEntry())

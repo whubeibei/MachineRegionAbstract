@@ -647,6 +647,10 @@ bool MachineRegionAbstractManager::getAndMergeCandidateList(
             //根据旧的Entry创建新的Entry
             MachineRepeatedItemInRegion *NewEntry = new MachineRepeatedItemInRegion();
             for (int l = Left; l < Right; l++) {
+              MachineInstr * oldInstr = OldEntry->RepeatedInstrDatas[l];
+              // 剔除跳转指令
+              if (oldInstr->isBranch())
+                break;          
               NewEntry->RepeatedInstrDatas.push_back(
                   OldEntry->RepeatedInstrDatas[l]);
               NewEntry->RepeatedInstSet.insert(OldEntry->RepeatedInstSet[l]);
@@ -757,6 +761,13 @@ bool MachineRepeatedItemInRegion::splitRegion(
     return false;
   }
   
+  // 切割前进行检查，若区域内存在被切割过的块，说明存在重叠
+  for (MachineBasicBlock* MBB : MinRegion->Blocks) {
+    if (NonSplittableBlockSet.contains(MBB)) {
+      // error region overlap
+      return false;
+    }
+  }
 
   MachineInstr *StartInst, *EndInst;
   switch (EntryBlockSplitMode) {
@@ -816,6 +827,7 @@ bool MachineRepeatedItemInRegion::splitRegion(
     // StartBB = PrevBB->splitAt(*SplitInst);
     // StartBB = splitMBB(PrevBB,SplitInst);
     StartBB = PrevBB->splitBefore(*StartInst);
+    NonSplittableBlockSet.insert(PrevBB); // 将被切割过的块也加入不可分割块集
     SplitedStart = true;
     AffectedFuncs.insert(PrevBB->getParent());
     MinRegion->updateEntry(StartBB);
@@ -893,6 +905,7 @@ bool MachineRepeatedItemInRegion::splitRegion(
     // }
     // MachineInstr *SplitInst = &*It;
     FollowBB = EndBB->splitBefore(*EndInst);
+    NonSplittableBlockSet.insert(FollowBB); // 将被切割过的块也加入不可分割块集
     // FollowBB = splitMBB(EndBB,SplitInst);
     SplitedEnd = true;
     AffectedFuncs.insert(EndBB->getParent());
@@ -1029,8 +1042,8 @@ void MachineRegionAbstractManager:: preVerifyReplaceMBBControlFlow() {
 bool MachineRegionAbstractManager::eraseSourceRegion() {
       // 删除整个区域的所有基本块
       for (MachineBasicBlock *MBB : BlocksToErase) {
-                MachineFunction *MF = MBB->getParent();
-                MF->dump();
+        MachineFunction *MF = MBB->getParent();
+        // MF->dump();
         // 删除 MBB 前，先处理它的所有后继或前驱块
         // 清理控制流关系
         MBB->clear();  // 清理前驱后继关系
@@ -1056,6 +1069,8 @@ bool MachineRegionAbstractManager::eraseSourceRegion() {
     return true;
 }
 
+// 
+
 bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
                                          MachineRegionMergeInfo &MRMI) {
   bool RegionAbstractedSomething = false;
@@ -1063,23 +1078,36 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
   const TargetSubtargetInfo &STI = MF->getSubtarget();
   const TargetInstrInfo &TII = *STI.getInstrInfo();
 
+ 
+
       // 处理整个区域的寄存器定义和使用情况
-      SmallSet<Register, 2> UseRegs, DefRegs;//避免重复添加
+      SmallSet<Register, 2> RegionUseRegs, RegionDefRegs;//避免重复添加
       MRARegionCandidate *example = Group->front();
       MachineFunction *exampleMF = example->MinRegion->Blocks.front()->getParent();
       const MachineRegisterInfo &MRI = exampleMF->getRegInfo();
       const TargetRegisterInfo &TRI = *MRI.getTargetRegisterInfo();
+
+      LivePhysRegs BlockLiveIns(TRI);
+      
+
+
       //使用迭代更新来分析区域的livein和liveout
       // 创建Def和LiveUse集合
-      DenseMap<MachineBasicBlock *, BitVector> Def;
-      DenseMap<MachineBasicBlock *, BitVector> LiveUse;
-      DenseMap<MachineBasicBlock *, BitVector> LiveIn;
-      DenseMap<MachineBasicBlock *, BitVector> LiveOut;
+      // DenseMap<MachineBasicBlock *, BitVector> Def;
+      // DenseMap<MachineBasicBlock *, BitVector> LiveUse;
+      // DenseMap<MachineBasicBlock *, BitVector> LiveIn;
+      // DenseMap<MachineBasicBlock *, BitVector> LiveOut;
+DenseMap<MachineBasicBlock *, SmallSet<Register, 2>> Def;
+DenseMap<MachineBasicBlock *, SmallSet<Register, 2>> LiveUse;
+DenseMap<MachineBasicBlock *, SmallSet<Register, 2>> LiveIn;
+DenseMap<MachineBasicBlock *, SmallSet<Register, 2>> LiveOut;      
 
       // 初始化每个基本块的Def和LiveUse集合
       for (auto &MBB : *MF) {
-          BitVector DefBV(TRI.getNumRegs());
-          BitVector LiveUseBV(TRI.getNumRegs());
+          // BitVector DefBV(TRI.getNumRegs());
+          // BitVector LiveUseBV(TRI.getNumRegs());
+          SmallSet<Register, 2> MBBDefRegs;
+          SmallSet<Register, 2> MBBUseRegs;          
           
           // 反向遍历每个基本块的指令，更新Def和LiveUse
           MachineBasicBlock::iterator StartIt = MBB.front();
@@ -1095,31 +1123,34 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
               // Skip over anything that isn't a register.
               if (!MOP.isReg())
                 continue;
-
               if (MOP.isDef()) {
                 // Introduce DefRegs set to skip the redundant register.
-                // DefRegs.insert(MOP.getReg());
-                DefBV.set(MOP.getReg());  // 记录定义
-                if (!MOP.isDead() && DefBV.test(MOP.getReg()))
+                // DefBV.set(MOP.getReg());  // 记录定义
+                MBBDefRegs.insert(MOP.getReg());
+                if (!MOP.isDead() && MBBUseRegs.count(MOP.getReg()))
                   // Since the regiester is modeled as defined,
                   // it is not necessary to be put in use register set.
-                  // UseRegs.erase(MOP.getReg());
-                  LiveUseBV.reset(MOP.getReg());
+                  // LiveUseBV.reset(MOP.getReg());
+                  MBBUseRegs.erase(MOP.getReg());
               } else if (!MOP.isUndef()) {
                 // Any register which is not undefined should
                 // be put in the use register set.
-                // UseRegs.insert(MOP.getReg());
-                LiveUseBV.set(MOP.getReg());  // 记录使用
+                // LiveUseBV.set(MOP.getReg());  // 记录使用
+                MBBUseRegs.insert(MOP.getReg());
               }
             }
             if (MI->isCandidateForCallSiteEntry())
               MI->getMF()->eraseCallSiteInfo(MI);
           }
           
-          Def[&MBB] = DefBV;
-          LiveUse[&MBB] = LiveUseBV;
-          LiveIn[&MBB].resize(TRI.getNumRegs());
-          LiveOut[&MBB].resize(TRI.getNumRegs());
+          // Def[&MBB] = DefBV;
+          // LiveUse[&MBB] = LiveUseBV;
+          // LiveIn[&MBB].resize(TRI.getNumRegs());
+          // LiveOut[&MBB].resize(TRI.getNumRegs());
+          Def[&MBB] = MBBDefRegs;
+          LiveUse[&MBB] = MBBUseRegs;
+          LiveIn[&MBB] = SmallSet<Register, 2>();  // 默认初始化为空
+          LiveOut[&MBB] = SmallSet<Register, 2>(); // 默认初始化为空          
       }
 
       bool changed = true;
@@ -1131,23 +1162,47 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
           // 反向遍历基本块
           for (auto MBBIt = MF->rbegin(); MBBIt != MF->rend(); ++MBBIt) {
               MachineBasicBlock &MBB = *MBBIt;
-              BitVector OldLiveIn = LiveIn[&MBB];
+              // BitVector OldLiveIn = LiveIn[&MBB];
+              SmallSet<Register, 2> OldLiveIn = LiveIn[&MBB];
               
               // 更新LiveOut集合：从所有后继中取LiveIn的并集
-              BitVector LiveOutBV(TRI.getNumRegs());
+              // BitVector LiveOutBV(TRI.getNumRegs());
+              SmallSet<Register, 2> LiveOutRS;
               for (MachineBasicBlock *Succ : MBB.successors()) {
-                  LiveOutBV |= LiveIn[Succ];
+                  // LiveOutBV |= LiveIn[Succ];
+                  // 手动合并 LiveIn[Succ] 到 LiveOutRS
+                  for (const Register &Reg : LiveIn[Succ]) {
+                      LiveOutRS.insert(Reg);
+                  }
               }
-              LiveOut[&MBB] = LiveOutBV;
+              // LiveOut[&MBB] = LiveOutBV;
+              LiveOut[&MBB] = LiveOutRS;
 
-              // 更新LiveIn集合
-              BitVector NewLiveIn = LiveUse[&MBB];
-              llvm::BitVector TempDef = Def[&MBB];  // 复制 Def
-              TempDef.flip();                       // 翻转 TempDef
-              llvm::BitVector TempLiveOut = LiveOut[&MBB]; // 复制 LiveOut
-              TempLiveOut &= TempDef;// 执行 LiveOut & ~Def 的操作
-              NewLiveIn |= TempLiveOut;
-              // NewLiveIn |= (LiveOut[&MBB] & ~Def[&MBB]); // LiveUse ∪ (LiveOut - Def)
+              // // 更新LiveIn集合
+              // BitVector NewLiveIn = LiveUse[&MBB];
+              // llvm::BitVector TempDef = Def[&MBB];  // 复制 Def
+              // TempDef.flip();                       // 翻转 TempDef
+              // llvm::BitVector TempLiveOut = LiveOut[&MBB]; // 复制 LiveOut
+              // TempLiveOut &= TempDef;// 执行 LiveOut & ~Def 的操作
+              // NewLiveIn |= TempLiveOut;
+              // // NewLiveIn |= (LiveOut[&MBB] & ~Def[&MBB]); // LiveUse ∪ (LiveOut - Def)
+
+              // 更新 LiveIn 集合
+              SmallSet<Register, 2> NewLiveIn = LiveUse[&MBB];
+              SmallSet<Register, 2> TempDef = Def[&MBB];  // 复制 Def
+              // TempDef.clear();                           // 清空 Def，因为 LiveOut & ~Def 的操作
+              SmallSet<Register, 2> TempLiveOut = LiveOut[&MBB]; // 复制 LiveOut
+              // // LiveOut & ~Def
+              // for (const Register &Reg : TempDef)
+              // {
+              //   TempLiveOut.erase(Reg);
+              // }              
+              // 手动合并 LiveOut 和 ~Def 到 NewLiveIn
+              for (const Register &Reg : TempLiveOut) {
+                  if (TempDef.count(Reg) == 0) {  // 相当于 LiveOut & ~Def
+                        NewLiveIn.insert(Reg);
+                    }
+              }
               
               if (NewLiveIn != OldLiveIn) {
                   changed = true;
@@ -1156,23 +1211,36 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
           }
       }
 
+      // // 处理第一个基本块
+      // if (MachineBasicBlock *FirstMBB = &MF->front()) {
+      //     const BitVector &LiveInBV = LiveIn[FirstMBB];
+      //     for (unsigned Reg = 0; Reg < TRI.getNumRegs(); ++Reg) {
+      //         if (LiveInBV.test(Reg)) {
+      //             UseRegs.insert(Reg);
+      //         }
+      //     }
+      // }
+
+      // // 处理所有基本块的Def集合
+      // for (auto &MBB : *MF) {
+      //     const BitVector &DefBV = Def[&MBB];
+      //     for (unsigned Reg = 0; Reg < TRI.getNumRegs(); ++Reg) {
+      //         if (DefBV.test(Reg)) {
+      //             DefRegs.insert(Reg);
+      //         }
+      //     }
+      // }
+
       // 处理第一个基本块
       if (MachineBasicBlock *FirstMBB = &MF->front()) {
-          const BitVector &LiveInBV = LiveIn[FirstMBB];
-          for (unsigned Reg = 0; Reg < TRI.getNumRegs(); ++Reg) {
-              if (LiveInBV.test(Reg)) {
-                  UseRegs.insert(Reg);
-              }
-          }
+          RegionUseRegs = LiveIn[FirstMBB];
       }
 
       // 处理所有基本块的Def集合
       for (auto &MBB : *MF) {
-          const BitVector &DefBV = Def[&MBB];
-          for (unsigned Reg = 0; Reg < TRI.getNumRegs(); ++Reg) {
-              if (DefBV.test(Reg)) {
-                  DefRegs.insert(Reg);
-              }
+          const SmallSet<Register, 2> &DefRegsInMBB = Def[&MBB]; // 获取该基本块的 Def 集合
+          for (const Register &Reg : DefRegsInMBB) {
+              RegionDefRegs.insert(Reg);  // 将 DefRegsInMBB 中的寄存器插入到 DefRegs 中
           }
       }
 
@@ -1219,7 +1287,7 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
                       // 替换为 replaceMBB
                       MO.setMBB(replaceMBB);                      
                       // 打印日志确认替换成功
-                      MI.dump();
+                      // MI.dump();
                   }
               }
           }
@@ -1254,67 +1322,11 @@ bool MachineRegionAbstractManager::replaceCall(MRARegionGroup *Group,
       // 集合，用于防止重复处理块
       SmallSet<MachineBasicBlock*, 16> Visited;
 
-
-      // LivePhysRegs LiveRegs;
-      // LiveRegs.init(TRI);  // TRI 是 TargetRegisterInfo
-      // LiveRegs.addLiveIns(*replaceMBB);
-
-      // // 将区域的出口块加入队列
-      // WorkQueue.push(LastMBB);
-      // Visited.insert(LastMBB);
-
-      // while (!WorkQueue.empty()) {
-      //     MachineBasicBlock *SourceBB = WorkQueue.front();  // 获取队列中的第一个元素
-      //     WorkQueue.pop();  // 然后移除该元素
-      //     MachineBasicBlock::iterator StartIt = SourceBB->front();
-      //     MachineBasicBlock::iterator EndIt = SourceBB->back();
-
-      //     // 在每个块中从下往上遍历
-      //     for (MachineBasicBlock::reverse_iterator
-      //             Iter = EndIt.getReverse(),
-      //             Last = std::next(StartIt.getReverse());
-      //         Iter != Last; Iter++) {
-      //       MachineInstr *MI = &*Iter;
-      //       for (MachineOperand &MOP : MI->operands()) {
-      //         // Skip over anything that isn't a register.
-      //         if (!MOP.isReg())
-      //           continue;
-
-      //         if (MOP.isDef()) {
-      //           // Introduce DefRegs set to skip the redundant register.
-      //           DefRegs.insert(MOP.getReg());
-      //           if (!MOP.isDead() && UseRegs.count(MOP.getReg()))
-      //             // Since the regiester is modeled as defined,
-      //             // it is not necessary to be put in use register set.
-      //             UseRegs.erase(MOP.getReg());
-      //         } else if (!MOP.isUndef()) {
-      //           // Any register which is not undefined should
-      //           // be put in the use register set.
-      //           UseRegs.insert(MOP.getReg());
-      //         }
-      //       }
-      //       if (MI->isCandidateForCallSiteEntry())
-      //         MI->getMF()->eraseCallSiteInfo(MI);
-      //     }
-
-      //     // 如果当前块是入口块，结束
-      //     if (SourceBB == FirstMBB)
-      //         continue;
-
-      //     // 将前驱块逆序加入队列
-      //     for (auto Pred = SourceBB->pred_rbegin(); Pred != SourceBB->pred_rend(); ++Pred) {
-      //         if (!Visited.count(*Pred)) {
-      //             WorkQueue.push(*Pred);
-      //             Visited.insert(*Pred);
-      //         }
-      //     }
-      // }
-
-      for (const Register &I : DefRegs) {
+      for (const Register &I : RegionDefRegs) {
         CallInst->addOperand(MachineOperand::CreateReg(I, true, true));
       }
 
-      for (const Register &I : UseRegs) {
+      for (const Register &I : RegionUseRegs) {
         CallInst->addOperand(MachineOperand::CreateReg(I, false, true));
       }
       
@@ -1695,7 +1707,7 @@ void MachineRegionAbstract::populateMapper(InstructionMapper &Mapper, Module &M,
   unsigned FuncDelimiterNumber = UINT_MAX - 3;
   //unsigned FuncDelimiterLowerLimit = FuncDelimiterNumber - FunctionsToProcess.size();
   //todo,修改为更合理的值
-  unsigned FunctionsToProcessNum = 10000;//暂定为10000,lzc,todo
+  unsigned FunctionsToProcessNum = 100000;//暂定为100000,lzc,todo
   unsigned FuncDelimiterLowerLimit = FuncDelimiterNumber - FunctionsToProcessNum;
   // NormalUpperLimit是因为还有DFS造成的分隔符，数目无法确定
   unsigned NormalUpperLimit = FuncDelimiterLowerLimit;
@@ -3484,7 +3496,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   //print(dbgs(),"打印MIR");
   std::cout << "打印MIR" << std::endl;
   //printMIR(dbgs(),M);
-  printCustomMIR(M,MMI);
+  // printCustomMIR(M,MMI);
 
   // if (MRARegisterRename.getValue()) {
   //   InstructionMapper<MachineInstrExpressionSimilarIgnoringRegisterNameTrait> Mapper;
@@ -3587,7 +3599,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   //MRAM->Mapper = Mapper;
     if (NeedMerge)
       MRAM->mergeCandidateList();
-      MRAM->printMIR();
+      //MRAM->printMIR();
       MRAM->eraseSourceRegion();
   // MRAM->printMIR();
   llvm::outs() << getTotalInstrNums(M,MMI);
