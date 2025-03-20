@@ -153,7 +153,8 @@ private:
  */
 struct MachineRegionMergeInfo {
   MRARegionGroup *CurrGroup;
-  MachineRegionMergeInfo(MRARegionGroup *Group) : CurrGroup(Group) {}
+  const TargetInstrInfo &TII;
+  MachineRegionMergeInfo(MRARegionGroup *Group, const TargetInstrInfo &TII) : CurrGroup(Group), TII(TII) {}
 
 
   //相关统计数据
@@ -172,13 +173,13 @@ struct MachineRegionMergeInfo {
   long BrokenDomRelationUseNum = 0;
   long FoldedBenefit = 0;
 
-  SetVector<MachineBasicBlock *> CreatedMatchBBs;
-  SetVector<MachineBasicBlock *> CreatedMisMatchBBs;
-  SetVector<MachineBasicBlock *> CreatedOverheadBBs;
+  SetVector<MachineBasicBlock *> CreatedMatchMBBs;
+  SetVector<MachineBasicBlock *> CreatedMisMatchMBBs;
+  SetVector<MachineBasicBlock *> CreatedOverheadMBBs;
 
   SetVector<MachineInstr *> CreatedOverheadBranches;
   SetVector<MachineBasicBlock *> BlocksToDelete;
-  SetVector<MachineInstr *> MisMatchInsrInMatchedBB;
+  SetVector<MachineInstr *> MisMatchInstrInMatchedMBB;
 
   std::map<MachineInstr *, Value *> InstrReplacedFrom;
   std::map<MachineInstr *, std::vector<unsigned>> InstrReplacedOpNums;
@@ -216,12 +217,15 @@ struct MachineRegionMergeInfo {
   std::vector<MachineBasicBlock *> OutputStoreBBs;
 
   std::vector<std::map<MachineBasicBlock *, MachineBasicBlock *> *> NewBB2OldBBList;
-  ValueMap<const Value *, WeakTrackingVH> VMap;
-  std::unordered_map<Value *, MachineBasicBlock *> MatchedValues2NBB;
+  // ValueMap<const Value *, WeakTrackingVH> VMap;
+  std::unordered_map<MachineBasicBlock *, MachineBasicBlock *> OldMBB2NBB;
+  std::unordered_map<MachineInstr *, MachineInstr *> OldMI2NMI;
+  std::unordered_map<MachineBasicBlock *, MachineBasicBlock *> MatchedMBB2NBB;
+  std::unordered_map<MachineInstr *, MachineBasicBlock *> MatchedMI2NBB;
 
   ValueMap<const Value *, WeakTrackingVH> InputsToArgs;
 
-  void addMatchedBBRelation(unsigned OldBBIndex, MachineBasicBlock *NewLabelBB);
+  void addMatchedMBBRelation(unsigned OldBBIndex, MachineBasicBlock *NewLabelBB);
   void addMatchedInstRelation(unsigned OldInstIndex,
                               MachineInstr *NewInstruction);
 
@@ -251,7 +255,7 @@ struct MachineRegionMergeInfo {
   // tools
   //Instruction *cloneInst(IRBuilder<> &Builder, MachineFunction *MF, Instruction *I);
 
-  MachineBasicBlock *chainBlocks(MachineBasicBlock *SrcBB, MachineBasicBlock *TargetBB,
+  MachineBasicBlock *chainMBlocks(MachineBasicBlock *SrcMBB, MachineBasicBlock *TargetMBB,
                           Value *IsFunc, unsigned CaseValue);
   void fillWithEachCandidate(std::vector<MachineBasicBlock *> &Blocks,
                              std::map<MachineBasicBlock *, MachineBasicBlock *> &BBMap,
@@ -1069,9 +1073,9 @@ public:
   std::vector<MachineFunction *> CreatedMergedFuncList;
   std::set<MachineFunction *> AffectedFuncs;
   MachineModuleInfo &MMI;//需要获得的MIR层信息
-  //TargetInstrInfo &TII;
+  const TargetInstrInfo &TII;
 
-  MachineRegionAbstractManager(Module &M0, MachineModuleInfo &MMI, InstructionMapper &Mapper) : M(M0), MMI(MMI), Mapper(Mapper) {};
+  MachineRegionAbstractManager(Module &M0, MachineModuleInfo &MMI, InstructionMapper &Mapper, const TargetInstrInfo &TII) : M(M0), MMI(MMI), Mapper(Mapper), TII(TII) { };
 
 
   // top level
@@ -1096,6 +1100,8 @@ public:
                              unsigned FunctionNameSuffix);
   bool fillMergedFunc(MRARegionGroup *Group, MachineRegionMergeInfo &MRMI);
   bool replaceCodeWithCall(MRARegionGroup *Group, MachineRegionMergeInfo &MRMI);
+  bool fillSimilarMergedFunc(MRARegionGroup *Group,
+                                           MachineRegionMergeInfo &MRMI);
 
   void getGroupParamsList(MachineRegionMergeInfo &MRMI);
   int getGroupBenefit(MachineRegionMergeInfo &MRMI);

@@ -1478,7 +1478,7 @@ bool MachineRegionAbstractManager::mergeRegionGroup(MRARegionGroup *Group,
     return false;
   }
 
-  if (!isRegionSame(Group)) return false;
+  // if (!isRegionSame(Group)) return false;
 
   // lzc，todo，进行填充时再完成
   // 暂时忽略进一步的切割，splitRegion先切割出区域。splitRepeatedSubstring在区域中进一步切割相同的块出来
@@ -1490,7 +1490,7 @@ bool MachineRegionAbstractManager::mergeRegionGroup(MRARegionGroup *Group,
   CreatedMergedFuncList.push_back(
       createMergedFunc(Group, MRMI, CreatedMergedFunctionNum));
   CreatedMergedFunctionNum++;
-  if (!fillMergedFunc(Group, MRMI)) {
+  if (!fillSimilarMergedFunc(Group, MRMI)) {
     CreatedMergedFuncList.pop_back();
     CreatedMergedFunctionNum--;
     //MRMI.MergedFunc->eraseFromParent(); lzc?
@@ -1556,7 +1556,7 @@ bool MachineRegionAbstractManager::mergeCandidateList() {
   // int I = 0;
   int TotalBenefit = 0;
   for (MRARegionGroup *CandidatePointer : CandidateList) {
-    MachineRegionMergeInfo MRMI(CandidatePointer);
+    MachineRegionMergeInfo MRMI(CandidatePointer,TII);
     analysisRegionGroup(CandidatePointer, MRMI);
     int Benefit = getGroupBenefit(MRMI);//调用functionfolding的收益模型？？
     int LowerLimit = RAInterBenefitLimit.getValue();
@@ -1586,7 +1586,7 @@ bool MachineRegionAbstractManager::mergeCandidateList() {
   if (RAAbstractInBlockCandidate.getValue() &&
       CreatedMergedFunctionNum < RACreatedFuncUpperLimit.getValue()) {
     for (MRARegionGroup *CandidatePointer : IntraBlockCandidateList) {
-      MachineRegionMergeInfo MRMI(CandidatePointer);
+      MachineRegionMergeInfo MRMI(CandidatePointer,TII);
       analysisRegionGroup(CandidatePointer, MRMI);
       int Benefit = getGroupBenefit(MRMI);//lzc todo代价模型
       int LowerLimit =
@@ -2007,146 +2007,356 @@ MachineRegionAbstractManager::createMergedFunc(MRARegionGroup *Group,
   return MRMI.MergedFunc;
 }
 
-// //以扩充的形式进行函数填写
-// bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
-//                                            MachineRegionMergeInfo &MRMI) {
-//   // init
-//   // SmallPtrSet<BasicBlock *, 1> ExitBlocks;
-//   MachineFunction *NewFunction = MRMI.MergedFunc;
-//   // 命名MachineBasicBlock
-//   //llvm::BasicBlock *BB = llvm::BasicBlock::Create(NewFunction->getFunction().getContext(), "newFuncRoot", &NewFunction->getFunction());
-//   // MachineBasicBlock *NewFuncRoot =
-//   //     NewFunction->CreateMachineBasicBlock(BB);
+// 用来链接匹配与不匹配部分
+MachineBasicBlock *MachineRegionMergeInfo::chainMBlocks(
+    MachineBasicBlock *SrcMBB, MachineBasicBlock *TargetMBB, Value *IsFunc,
+    unsigned CaseValue) {
+  // 如果源MBB没有终结符
+  if (SrcMBB->empty()) {
+    // 创建无条件跳转指令
+    BuildMI(*SrcMBB, SrcMBB->end(), DebugLoc(), TII.get(TargetOpcode::G_BR))
+        .addMBB(TargetMBB);
+  } else {
+    // 获取源MBB的最后一条指令
+    MachineInstr &LastInstr = SrcMBB->back();
+    if (LastInstr.isBranch()) {
+      // 如果是无条件跳转
+      if (LastInstr.isUnconditionalBranch()) {
+        MachineBasicBlock *SuccMBB = LastInstr.getOperand(0).getMBB();
+        if (SuccMBB != TargetMBB) {
+          // // 删除原跳转指令，创建条件跳转
+          // SrcMBB->remove(&LastInstr);
+          // BuildMI(*SrcMBB, SrcMBB->end(), DebugLoc(), TII.get(TargetOpcode::G_BRCOND))
+          //     .addMBB(TargetMBB);
+          // 不删除原跳转指令，在跳转指令之前添加一条条件跳转指令
+          
+        }
+      } else {
+        // 如果是有条件跳转，则添加分割块，并添加有条件跳转指令
+        MachineFunction *MF = SrcMBB->getParent();
+        MachineBasicBlock *NewMBB = MF->CreateMachineBasicBlock();
+        // todo,创建新块是否要将其塞入函数中
+        CreatedOverheadMBBs.insert(NewMBB);
 
-//   // BB = llvm::BasicBlock::Create(NewFunction->getFunction().getContext(), "newFuncExit", &NewFunction->getFunction());
-//   // MachineBasicBlock *NewFuncExit =
-//   //     NewFunction->CreateMachineBasicBlock(BB);
+        // 移除原来的跳转指令
+        SrcMBB->remove(&LastInstr);
 
-//     MachineBasicBlock *NewFuncRoot =
-//       NewFunction->CreateMachineBasicBlock();
+        // 添加条件跳转到新的分割MBB
+        BuildMI(*SrcMBB, SrcMBB->end(), DebugLoc(), TII.get(TargetOpcode::G_BRCOND))
+            .addMBB(NewMBB);
 
-//     MachineBasicBlock *NewFuncExit =
-//       NewFunction->CreateMachineBasicBlock();
+        // 添加条件跳转到目标MBB
+        BuildMI(*NewMBB, NewMBB->end(), DebugLoc(), TII.get(TargetOpcode::G_BRCOND))
+            .addMBB(TargetMBB);
 
-//   //创建块以后，还需要插入到函数中
-//   NewFunction->insert(NewFunction->begin(), NewFuncRoot);
-//   NewFunction->insert(NewFunction->end(), NewFuncExit);
+        return NewMBB;
+      }
+    } else {
+      // 处理没有跳转指令的情况
+      BuildMI(*SrcMBB, SrcMBB->end(), DebugLoc(), TII.get(TargetOpcode::G_BR))
+          .addMBB(TargetMBB);
+    }
+  }
+  return nullptr;
+}
 
-//   //lzc?,需要将块加入链？
-//   // NewFunction->BasicBlockListType.push_back(NewFuncRoot);
-//   // MachineBasicBlock *NewFuncExit =
-//   //     MachineBasicBlock::Create(NewFunction->getContext(), "newFuncExit");
-//   // NewFunction->getBasicBlockList().push_back(NewFuncExit);
 
-//   std::vector<MachineInstr *> ListSelects;
-//   std::vector<AllocaInst *> Allocas;
-//   std::vector<unsigned> MatchedPHINodes;
+// 该函数作用是将每个候选项填充进合并函数
+void MachineRegionMergeInfo::fillWithEachCandidate(
+    std::vector<MachineBasicBlock *> &MBlocks,
+    std::map<MachineBasicBlock *, MachineBasicBlock *> &MBBMap, Value *IsFunc,
+    unsigned CaseValue, MachineBasicBlock *NewFuncRoot, MachineBasicBlock *SourcePrevBB) {
 
-//   std::list<MachineInstr *> LinearOffendingInsts;
-//   std::set<MachineInstr *> OffendingInsts;
+  for (MachineBasicBlock *MBB : MBlocks) {
+    MachineBasicBlock *LastMergedMBB = nullptr;
+    MachineBasicBlock *NewMBB = nullptr;
+    bool BBHasBeenMerged = MatchedMBB2NBB.find(MBB) != MatchedMBB2NBB.end();
+    if (BBHasBeenMerged) {
+      LastMergedMBB = MatchedMBB2NBB[MBB];
+    } else {
+      // std::string BBName = "src" + to_string(CaseValue) + ".bb";
+      // NewMBB = BasicBlock::Create(MergedFunc->getContext(), BBName, MergedFunc);
+      
+      // 发现未匹配块，创建新的基本块
+      MachineFunction *NewFunction = MergedFunc;
+      NewMBB = NewFunction->CreateMachineBasicBlock();
+      CreatedMisMatchMBBs.insert(NewMBB);
+      // 进行一个相互绑定
+      // VMap[BB] = NewBB;
+      OldMBB2NBB[MBB] = NewMBB;
+      MBBMap[NewMBB] = MBB;
 
-//   std::vector<Value *> SourceIds;//lzc不知道用途,用来处理来源的选择？
+      // todo 修改原块被使用处
 
-//   // Fill In Content
-//   unsigned CurrentMatchedInstIndex = 0;
-//   // 1. fill in content for match part
-//   //for (unsigned I = 0; I < (*Group)[0]->RelatedMBlocks.size(); I++) {
-//     // BasicBlock *LabelBB = BasicBlock::Create(NewFunction->getFunction().getContext(),
-//     //                                          "m.label.bb", &NewFunction->getFunction());
-//     // MachineBasicBlock *LabelMBB = NewFunction->CreateMachineBasicBlock(BB);
+      // // IMPORTANT: make sure any use in a blockaddress constant
+      // // operation is updated correctly
+      // for (User *U : BB->users()) {
+      //   if (BlockAddress *BA = dyn_cast<BlockAddress>(U)) {
+      //     VMap[BA] = BlockAddress::get(MergedFunc, NewBB);
+      //   }
+      // }
 
-//     //填充相同部分情况，直接复制MinRegion
-//     MachineRepeatedItemInRegion *Candidate0 = (*Group)[0];
+      // todo,将老MBB的地址改为新MBB
+
+      // errs() << "NewBB: " << NewBB->getName() << "\n";
+      // IRBuilder<> Builder(NewBB);
+      // for (Instruction &I : *BB) {
+      //   if (isa<PHINode>(&I)) {
+      //     VMap[&I] = Builder.CreatePHI(I.getType(), 0);
+      //   }
+      // }
+    }
+    // todo,存在块合并而指令未合并？
+    // 不论块是否合并，都会检查其中的每条指令，判断是否被合并？
+    for (MachineInstr &MI : *MBB) {
+      // if (isa<LandingPadInst>(&MI))
+      //   continue;
+      // if (isa<PHINode>(&MI))
+      //   continue;
+
+      bool HasBeenMerged =
+          MatchedMI2NBB.find(&MI) != MatchedMI2NBB.end();
+      if (HasBeenMerged) {
+        MachineBasicBlock *NodeMBB = MatchedMI2NBB[&MI];
+        if (LastMergedMBB) {
+          // 将两个MBB连接起来
+          MachineBasicBlock *Via =
+              chainMBlocks(LastMergedMBB, NodeMBB, IsFunc, CaseValue);
+          if (Via) {
+            MBBMap[Via] = MBB;
+          }
+        } else {
+          // 如果没有合并前MBB, 直接创建分支指令
+          BuildMI(*NewMBB, NewMBB->end(), DebugLoc(), TII.get(TargetOpcode::G_BR))
+              .addMBB(NodeMBB);
+        }
+        // 记录已经合并的MBB
+        LastMergedMBB = NodeMBB;
+      } else {
+        if (LastMergedMBB) {
+          // std::string MBBName = std::string("split.mbb");
+          NewMBB = MergedFunc->CreateMachineBasicBlock();
+          CreatedMisMatchMBBs.insert(NewMBB);
+
+          MachineBasicBlock *Via =
+              chainMBlocks(LastMergedMBB, NewMBB, IsFunc, CaseValue);
+          if (Via) {
+            MBBMap[Via] = MBB;
+          }
+          MBBMap[NewMBB] = MBB;
+        }
+        LastMergedMBB = nullptr;
+
+        // 克隆指令,复制进入新块中
+        MachineInstr *NewMI = MergedFunc->CloneMachineInstr(&MI);
+        NewMBB->insert(NewMBB->end(), NewMI);
+        // MIVMap[&MI] = NewMI; //todo
+
+        // 添加用于函数折叠的指令
+        if (HasBeenMerged) {
+          MisMatchInstrInMatchedMBB.insert(&MI);
+        }
+      }
+    }
+
+  }
+
+  MachineBasicBlock *EntryMBB = MBlocks.size() == 1 ? MBlocks[0] : MBlocks[1];
+  MachineBasicBlock *NewEntryMBB = OldMBB2NBB[EntryMBB];
+  MBBMap[NewFuncRoot] = SourcePrevBB;
+  MachineBasicBlock *Via = chainMBlocks(NewFuncRoot, NewEntryMBB, IsFunc, CaseValue);
+  if (Via) {
+    MBBMap[Via] = SourcePrevBB;
+  }
+}
+
+// 将匹配部分的块进行关联
+void MachineRegionMergeInfo::addMatchedMBBRelation(unsigned OldBBIndex,
+                                           MachineBasicBlock *NewLabelMBB) {
+  for (int J = 0; J < (*CurrGroup).size(); J++) {
+    MachineBasicBlock *OldMBB = (*CurrGroup)[J]->RelatedMBlocks[OldBBIndex];
+    MatchedMBB2NBB[OldMBB] = NewLabelMBB;
+    (*NewBB2OldBBList[J])[NewLabelMBB] = OldMBB;
+    OldMBB2NBB[OldMBB] = NewLabelMBB;
+
+    // todo 修改原块的使用者
+
+    // for (User *U : OldBB->users()) {
+    //   if (BlockAddress *BA = dyn_cast<BlockAddress>(U)) {
+    //     VMap[BA] = BlockAddress::get(MergedFunc, NewLabelBB);
+    //   }
+    // }
+  }
+}
+
+// 将匹配部分的指令进行关联
+void MachineRegionMergeInfo::addMatchedInstRelation(unsigned OldInstIndex,
+                                             MachineInstr *NewMI) {
+  for (int J = 0; J < (*CurrGroup).size(); J++) {
+    MachineInstr *OldInst = (*CurrGroup)[J]->RepeatedInstSet[OldInstIndex];
+    MachineBasicBlock *NewMBB = NewMI->getParent();
+    MatchedMI2NBB[OldInst] = NewMBB;
+    // if (!isa<PHINode>(OldInst))
+    //   (*NewBB2OldBBList[J])[NewBB] = OldInst->getParent();
+    OldMI2NMI[OldInst] = NewMI;
+  }
+}
+
+// 以扩充的形式进行函数填写
+// 版本2
+// 填充并不完全相同的抽象函数
+bool MachineRegionAbstractManager::fillSimilarMergedFunc(MRARegionGroup *Group,
+                                           MachineRegionMergeInfo &MRMI) {
+                    
+  // init
+  // SmallPtrSet<BasicBlock *, 1> ExitBlocks;
+  MachineFunction *NewFunction = MRMI.MergedFunc;
+  // 在新函数中创建入块出块
+  MachineBasicBlock *NewFuncRoot = NewFunction->CreateMachineBasicBlock();
+  NewFunction->insert(NewFunction->end(), NewFuncRoot); // 插入到退出块之前
+  MachineBasicBlock *NewFuncExit = NewFunction->CreateMachineBasicBlock();
+  NewFunction->insert(NewFunction->end(), NewFuncExit); // 插入到退出块之前
+
+  // std::vector<Instruction *> ListSelects;
+  // std::vector<AllocaInst *> Allocas;
+  // std::vector<unsigned> MatchedPHINodes;
+
+  std::list<MachineInstr *> LinearOffendingInsts;
+  std::set<MachineInstr *> OffendingInsts;
+
+  std::vector<Value *> SourceIds;
+
+  // for (MachineRepeatedItemInRegion *Candidate : *Group) {
+  //   assert(Candidate->FollowBB != nullptr && "FollowBB is null!");
+  //   MRMI.VMap[Candidate->FollowBB] = NewFuncExit;
+  // }
+
+  for (int I = 0; I < (*Group).size(); I++) {
+    std::map<MachineBasicBlock *, MachineBasicBlock *> *MapI =
+        new std::map<MachineBasicBlock *, MachineBasicBlock *>();
+    MRMI.NewBB2OldBBList.push_back(MapI);
+  }
+  // finish init
+
+  // source id
+  // 对于MIR的sourceid存放在一个寄存器中，需要将寄存器中存放的值取出，使用select指令逐一匹配，因为switch效率不高
+  // 假设使用寄存器R10
+  // BuildMI(*MBB, MI, DL, TII->get(X86::MOV64rr))
+  //   .addDef(X86::RAX)   // 复制到 RAX 使用
+  //   .addReg(X86::R10);
+
+  // MachineInstr *cmp = BuildMI(*MBB, MI, DL, TII->get(X86::CMP64ri))
+  //     .addReg(X86::R10)
+  //     .addImm(1);
+
+  // BuildMI(*MBB, MI, DL, TII->get(X86::JE_1))
+  //     .addMBB(SpecialLogicMBB);
+
+  // 尝试修改为
+  for (int I = 0; I < Group->size(); I++) {
+    Value *SourceIdInt =
+        ConstantInt::get(Type::getInt32Ty(NewFuncRoot->getContext()), I);
+    CmpInst *SourceId = CmpInst::Create(
+        Instruction::ICmp, ICmpInst::ICMP_EQ, SourceNum, SourceIdInt,
+        "sourceid_" + to_string(I), NewFuncRoot);
+    SourceIds.push_back(SourceId);
+  }
+  if (RAAggregateSourceId) {
+    // Idx[1] = ConstantInt::get(Type::getInt32Ty(NewFuncRoot->getContext()), 0);
+    // GetElementPtrInst *GEP = GetElementPtrInst::Create(
+    //     RMI.StructTy, Arg0, Idx, "gep_source_num", NewFuncRoot);
+    // Value *SourceNum = new LoadInst(RMI.StructTy->getElementType(0), GEP,
+    //                                   "source_num", NewFuncRoot);
     
-//     LzcRegion *MinRegion = Candidate0->MinRegion;
-//     MachineFunction *OriginalMF = Candidate0->ParentFunc;
-//     // MachineBasicBlock *SourceBB = Candidate0->RelatedMBlocks[I];
-//     const std::vector<MCCFIInstruction> &Instrs = OriginalMF->getFrameInstructions();
-//     std::unordered_map<MachineBasicBlock *, MachineBasicBlock *> OldToNewBBMap;
+  }
 
-//     for (MachineBasicBlock *SourceBB : MinRegion->Blocks)
-//     {
-//       MachineBasicBlock *LabelMBB = NewFunction->CreateMachineBasicBlock();
-//       NewFunction->insert(++(NewFunction->begin()), LabelMBB);//插入到中间位置？
-//       //MRMI.addMatchedBBRelation(I, LabelBB);
+  // 初始化映射，跟踪旧块到新块的映射
+  std::unordered_map<MachineBasicBlock *, MachineBasicBlock *> OldToNewBBMap;
+  MachineRepeatedItemInRegion *Candidate0 = (*Group)[0];
+  LzcRegion *MinRegion = Candidate0->MinRegion;
+  MachineFunction *OriginalMF = Candidate0->ParentFunc;
+  const std::vector<MCCFIInstruction> &Instrs = OriginalMF->getFrameInstructions();
 
-//       for (MachineInstr &MI : *SourceBB) {
-//         if (CurrentMatchedInstIndex >= Candidate0->RepeatedInstSet.size()) {
-//           break;
-//         }
-//         if (&MI != Candidate0->RepeatedInstSet[CurrentMatchedInstIndex]) {
-//           MI.dump();
-//           Candidate0->RepeatedInstSet[CurrentMatchedInstIndex]->dump();
-//           if (Debug) {
-//             errs() << "Error: no map for instruction\n";
-//           }
-//           //return false;
-//         }
+  // Fill In Content
+  unsigned CurrentMatchedInstIndex = 0;
+  // 1. fill in content for match part
+  for (unsigned I = 0; I < (*Group)[0]->RelatedMBlocks.size(); I++) {
+    MachineRepeatedItemInRegion *Candidate0 = (*Group)[0];
+    MachineBasicBlock *SourceMBB = Candidate0->RelatedMBlocks[I];
+    // 在新函数中为每个旧块创建新块
+    MachineBasicBlock *NewMBB = NewFunction->CreateMachineBasicBlock();
+    NewFunction->insert(NewFunction->end(), NewMBB); // 插入到退出块之前
+    OldToNewBBMap[SourceMBB] = NewMBB;
+    // MachineBasicBlock *LabelMBB = MachineBasicBlock::Create(NewFunction->getContext(),
+    //                                          "m.label.bb", NewFunction);
+    MRMI.addMatchedMBBRelation(I, NewMBB);
 
-//       // //lzc，todo,对PHI的特殊处理
-//       // BasicBlock *InstBB = MI.isPHI()
-//       //                          ? LabelBB
-//       //                          : BasicBlock::Create(NewFunction->getFunction().getContext(),
-//       //                                               "m.inst.bb", &NewFunction->getFunction());
+    // Candidate0->printAllInsts();
+    // errs() << "\n\n" << *SourceBB << "\n";
 
-//       //       if (isa<PHINode>(&MI)) {
-//       //   MatchedPHINodes.push_back(CurrentMatchedInstIndex);
-//       // }
-//       if(MI.isDebugInstr())
-//         continue;
-//       MachineInstr *NewMI = NewFunction->CloneMachineInstr(&MI);
-//       if (MI.isCFIInstruction()) {
-//         unsigned CFIIndex = NewMI->getOperand(0).getCFIIndex();
-//         MCCFIInstruction CFI = Instrs[CFIIndex];
-//         (void)NewFunction->addFrameInst(CFI);
-//       }
+    for (MachineInstr &MI : *SourceMBB) {
+      if (CurrentMatchedInstIndex >= Candidate0->RepeatedInstSet.size()) {
+        break;
+      }
+      if (&MI != Candidate0->RepeatedInstSet[CurrentMatchedInstIndex]) {
+        // Inst.dump();
+        // Candidate0->RepeatedInstSet[CurrentMatchedInstIndex]->dump();
+        if (Debug) {
+          errs() << "Error: no map for instruction\n";
+        }
+        return false;
+      }
 
-//       NewMI->dropMemRefs(*NewFunction);
-//       // Don't keep debug information for outlined instructions.
-//       NewMI->setDebugLoc(DebugLoc());
-//       LabelMBB->insert(LabelMBB->end(), NewMI);
+      // BasicBlock *InstBB = isa<PHINode>(&Inst)
+      //                          ? LabelBB
+      //                          : BasicBlock::Create(NewFunction->getContext(),
+      //                                               "m.inst.bb", NewFunction);
+      // IRBuilder<> Builder(InstBB);
+      // Instruction *NewI = MRMI.cloneInst(Builder, NewFunction, &Inst);
+      // MRMI.addMatchedInstRelation(CurrentMatchedInstIndex, NewI);
+      // if (isa<PHINode>(&Inst)) {
+      //   MatchedPHINodes.push_back(CurrentMatchedInstIndex);
+      // }
 
-//       //lzc,todo? 构建旧指令和新块之间的映射？？
-//       //MRMI.addMatchedInstRelation(CurrentMatchedInstIndex, NewI);
+      // 复制指令
 
-//       CurrentMatchedInstIndex++;
-//       }
-//     }
-    
-//     // Candidate0->printAllInsts();
-//     // errs() << "\n\n" << *SourceBB << "\n";
+      if (MI.isDebugInstr()) continue;
+      MachineInstr *NewMI = NewFunction->CloneMachineInstr(&MI);
+      if (MI.isCFIInstruction()) {
+        unsigned CFIIndex = NewMI->getOperand(0).getCFIIndex();
+        MCCFIInstruction CFI = Instrs[CFIIndex];
+        (void)NewFunction->addFrameInst(CFI);
+      }
+      NewMI->dropMemRefs(*NewFunction);
+      NewMI->setDebugLoc(DebugLoc());
+      NewMBB->insert(NewMBB->end(), NewMI);
+      CurrentMatchedInstIndex++;
+    }
+  }
 
-//   //}
-//   // Set normal properties for a late MachineFunction.
-//   NewFunction->getProperties().reset(MachineFunctionProperties::Property::IsSSA);
-//   NewFunction->getProperties().set(MachineFunctionProperties::Property::NoPHIs);
-//   NewFunction->getProperties().set(MachineFunctionProperties::Property::NoVRegs);
-//   NewFunction->getProperties().set(MachineFunctionProperties::Property::TracksLiveness);
-//   NewFunction->getRegInfo().freezeReservedRegs(*NewFunction);
+  // 2. fill in mismatch part
+  for (int I = 0; I < (*Group).size(); I++) {
+    // Value *SourceId = SourceIds[I];
+    int SourceId = I;
+    MachineRepeatedItemInRegion *Candidate = (*Group)[I];
+    MRMI.fillWithEachCandidate(Candidate->MinRegion->Blocks,
+                              *MRMI.NewBB2OldBBList[I], SourceId, I, NewFuncRoot,
+                              Candidate->PrevBB);
 
-//   //   // Compute live-in set for outlined fn
-//   // const MachineRegisterInfo &MRI = NewFunction->getRegInfo();
-//   // const TargetRegisterInfo &TRI = *MRI.getTargetRegisterInfo();
-//   // LivePhysRegs LiveIns(TRI);
-//   // for (auto &Cand : OF.Candidates) {
-//   //   // Figure out live-ins at the first instruction.
-//   //   MachineBasicBlock &OutlineBB = *Cand.front()->getParent();
-//   //   LivePhysRegs CandLiveIns(TRI);
-//   //   CandLiveIns.addLiveOuts(OutlineBB);
-//   //   for (const MachineInstr &MI :
-//   //        reverse(make_range(Cand.front(), OutlineBB.end())))
-//   //     CandLiveIns.stepBackward(MI);
+    // if (Candidate->HasExitExtraPHI) {
+    //   BasicBlock *NewEndBB = RMI.MatchedValues2NBB[Candidate->EndBB];
+    //   IRBuilder<> Builder(NewEndBB);
+    //   for (Instruction *I : Candidate->ExitExtraPHI) {
+    //     if (isa<PHINode>(I)) {
+    //       RMI.VMap[I] = Builder.CreatePHI(I->getType(), 0);
+    //     } else {
+    //       assert(false && "Value should be phi node!");
+    //     }
+    //   }
+    // }
+  }
 
-//   //   // The live-in set for the outlined function is the union of the live-ins
-//   //   // from all the outlining points.
-//   //   for (MCPhysReg Reg : CandLiveIns)
-//   //     LiveIns.addReg(Reg);
-//   // }
-//   // addLiveIns(MBB, LiveIns);
-
-//   // TII.buildOutlinedFrame(MBB, MF, OF);
-//   return true;
-// }
+}
 
 bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
                                                    MachineRegionMergeInfo &MRMI) {
@@ -2198,9 +2408,9 @@ bool MachineRegionAbstractManager::fillMergedFunc(MRARegionGroup *Group,
         FallThroughed.insert(fallThroughedMBB);
       }   
     }
-    // // 将入口块加入队列
-    // WorkQueue.push(EntryBlock);
-    // Visited.insert(EntryBlock);
+
+    // 复制原区域的块至新块
+
     // 将入口块加入栈
     WorkStack.push(EntryBlock);
     Visited.insert(EntryBlock);
@@ -3471,6 +3681,9 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
     return false;
 
   MachineModuleInfo &MMI = getAnalysis<MachineModuleInfoWrapperPass>().getMMI();
+  Function &F = M.getFunctionList().front();
+  MachineFunction *MF = MMI.getMachineFunction(F);
+  const TargetInstrInfo &TII = *MF->getSubtarget().getInstrInfo();
 
   llvm::outs() << getTotalInstrNums(M,MMI);
 
@@ -3581,7 +3794,7 @@ bool MachineRegionAbstract::runOnModule(Module &M) {
   }
 
 
-  MachineRegionAbstractManager *MRAM = new MachineRegionAbstractManager(M,MMI,Mapper);
+  MachineRegionAbstractManager *MRAM = new MachineRegionAbstractManager(M,MMI,Mapper,TII);
   bool NeedMerge = false;
   if (RAGetAndMerge.getValue()) {
     NeedMerge = MRAM->getAndMergeCandidateList(NewRSList, Mapper.InstrList, *this);
